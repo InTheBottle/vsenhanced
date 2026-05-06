@@ -97,7 +97,7 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 	origin /= cloudTileSize;
 	origin.xz += realCloudShadowMapWidth * 0.5;
 	
-	float farT = min(layer.y / cloudTileSize, realCloudShadowMapWidth);
+	float farT = min(min(layer.y / cloudTileSize, realCloudShadowMapWidth), 64.0);
 	ivec2 cell = ivec2(floor(origin.xz));
 	vec2 positiveStep = step(vec2(0.0), sunDir.xz);
 	ivec2 stepDir = ivec2(positiveStep * 2.0 - 1.0);
@@ -108,7 +108,7 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 	float t = 0.0;
 	float shadow = 0.0;
 	
-	for (int i = 0; i < 96; i++) {
+	for (int i = 0; i < 64; i++) {
 		if (cell.x < 0 || cell.y < 0 || cell.x >= int(realCloudShadowMapWidth) || cell.y >= int(realCloudShadowMapWidth)) break;
 		float nextT = min(min(tMax.x, tMax.y), farT);
 		vec4 map = clamp(texelFetch(realCloudShadowMap, cell, 0), vec4(0.0), vec4(1.0));
@@ -119,7 +119,7 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 			float hit = core * clamp(segment * map.r * 2.6, 0.0, 1.0);
 			shadow = clamp(shadow + (1.0 - shadow) * hit, 0.0, 0.92);
 			if (!(shadow >= 0.0)) return 0.0;
-			if (shadow > 0.90) break;
+			if (shadow > 0.86) break;
 		}
 		if (nextT >= farT) break;
 		if (tMax.x < tMax.y) {
@@ -186,6 +186,7 @@ void main()
 	}
 
 	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
+	outColor.rgb = applyMoonDirectLight(outColor.rgb, normal, fogAmount);
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(outColor.rgb, vec3(0.299, 0.587, 0.114)));
 	outColor.rgb *= mix(1.0, vspCloudShadow, vspLitGuard);

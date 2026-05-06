@@ -9,6 +9,7 @@ uniform vec3 realCloudShadowOffset;
 uniform float realCloudShadowStrength;
 uniform vec3 realCloudShadowLightDir;
 uniform float realCloudShadowDaylight;
+uniform float realMoonLightStrength;
 
 float getSkyMurkiness() {
 	if (cameraUnderwater > 0.7) {
@@ -46,10 +47,9 @@ float getUnderwaterMurkiness() {
 float causticFilament(vec2 p, float t) {
 	float n1 = gnoise(vec3(p + vec2(t, -t * 0.72), t * 0.15));
 	float n2 = gnoise(vec3(p * 1.74 + vec2(-t * 0.47, t * 0.84), t * 0.21));
-	float n3 = gnoise(vec3(p * 3.10 + vec2(t * 0.18, t * 0.38), t * 0.10));
 	float ridges = 1.0 - abs(n1 - n2);
-	ridges *= 1.0 - abs(n2 - n3) * 0.72;
-	return smoothstep(0.50, 0.90, pow(clamp(ridges, 0.0, 1.0), 12.0));
+	ridges *= 0.82 + 0.18 * n1;
+	return smoothstep(0.52, 0.90, pow(clamp(ridges, 0.0, 1.0), 11.0));
 }
 
 float getCausticLight(vec3 worldPos, float murkiness) {
@@ -76,6 +76,17 @@ vec3 applyUnderwaterEffectsAt(vec3 color, float murkiness, vec3 worldPos) {
 	float waterShadow = smoothstep(0.18, 0.95, murkiness) * 0.18;
 	vec3 shadedColor = mix(color.rgb, murkColor, murkiness) * (1.0 - waterShadow);
 	return shadedColor + causticColor * getCausticLight(worldPos, murkiness);
+}
+
+vec3 applyMoonDirectLight(vec3 color, vec3 normal, float fogAmount) {
+	float moon = clamp(realMoonLightStrength, 0.0, 1.0);
+	if (moon <= 0.001) return color;
+
+	float upness = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
+	float ndl = max(0.0, dot(normalize(normal), normalize(realCloudShadowLightDir)));
+	float direct = pow(ndl, 0.85) * upness * moon * (1.0 - smoothstep(0.38, 0.92, fogAmount));
+	vec3 moonTint = vec3(0.46, 0.55, 0.78);
+	return color + (color * moonTint * 0.22 + vec3(0.006, 0.009, 0.017)) * direct;
 }
 
 vec4 applyWetSurface(vec4 texColor, vec3 normal, vec3 worldPos, float fogAmount, float glowLevel) {

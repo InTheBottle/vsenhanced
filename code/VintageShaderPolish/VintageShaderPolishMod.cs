@@ -173,8 +173,9 @@ internal static class RealCloudShadowState
         bool wantsCloudStrength = shader.HasUniform("realCloudShadowStrength");
         bool wantsLightDirection = shader.HasUniform("realCloudShadowLightDir");
         bool wantsDaylight = shader.HasUniform("realCloudShadowDaylight");
+        bool wantsMoonlight = shader.HasUniform("realMoonLightStrength");
         bool wantsWetness = shader.HasUniform("dropletIntensity");
-        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight;
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight;
         if (!wantsCloudState && !wantsWetness)
         {
             return;
@@ -194,6 +195,7 @@ internal static class RealCloudShadowState
 
             Vec3f sun = GetUpwardSunDirection();
             float daylight = GetCelestialLightStrength();
+            float moonlight = GetMoonLightStrength();
             bool shouldBindCloudMap = ShouldBindCloudMap(shader, wantsCloudSampler);
             bool hasCloudState = CloudMapTextureId > 0 && CloudMapWidth > 1f && CloudOffset is { };
 
@@ -204,6 +206,10 @@ internal static class RealCloudShadowState
             if (wantsDaylight)
             {
                 shader.Uniform("realCloudShadowDaylight", daylight);
+            }
+            if (wantsMoonlight)
+            {
+                shader.Uniform("realMoonLightStrength", moonlight);
             }
             if (wantsCloudMapWidth)
             {
@@ -254,6 +260,10 @@ internal static class RealCloudShadowState
             if (wantsDaylight)
             {
                 shader.Uniform("realCloudShadowDaylight", daylight);
+            }
+            if (wantsMoonlight)
+            {
+                shader.Uniform("realMoonLightStrength", moonlight);
             }
 
             if (!loggedFirstBind)
@@ -325,9 +335,20 @@ internal static class RealCloudShadowState
             return daylight;
         }
 
-        float moonElevation = Math.Clamp(-sun.Y, 0f, 1f);
-        float moonlight = SmoothStep(Math.Clamp((moonElevation - 0.03f) / 0.42f, 0f, 1f)) * 0.32f;
+        float moonlight = GetMoonLightStrength();
         return Math.Max(daylight, moonlight);
+    }
+
+    private static float GetMoonLightStrength()
+    {
+        Vec3f sun = api!.World.Calendar.SunPositionNormalized;
+        if (sun.Y >= 0f)
+        {
+            return 0f;
+        }
+
+        float moonElevation = Math.Clamp(-sun.Y, 0f, 1f);
+        return SmoothStep(Math.Clamp((moonElevation - 0.03f) / 0.42f, 0f, 1f)) * 0.42f;
     }
 
     private static float SmoothStep(float value) => value * value * (3f - 2f * value);

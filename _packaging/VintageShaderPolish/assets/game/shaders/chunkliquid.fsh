@@ -85,7 +85,7 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 	origin /= cloudTileSize;
 	origin.xz += realCloudShadowMapWidth * 0.5;
 	
-	float farT = min(layer.y / cloudTileSize, realCloudShadowMapWidth);
+	float farT = min(min(layer.y / cloudTileSize, realCloudShadowMapWidth), 64.0);
 	ivec2 cell = ivec2(floor(origin.xz));
 	vec2 positiveStep = step(vec2(0.0), sunDir.xz);
 	ivec2 stepDir = ivec2(positiveStep * 2.0 - 1.0);
@@ -96,7 +96,7 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 	float t = 0.0;
 	float shadow = 0.0;
 	
-	for (int i = 0; i < 96; i++) {
+	for (int i = 0; i < 64; i++) {
 		if (cell.x < 0 || cell.y < 0 || cell.x >= int(realCloudShadowMapWidth) || cell.y >= int(realCloudShadowMapWidth)) break;
 		float nextT = min(min(tMax.x, tMax.y), farT);
 		vec4 map = clamp(texelFetch(realCloudShadowMap, cell, 0), vec4(0.0), vec4(1.0));
@@ -107,7 +107,7 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 			float hit = core * clamp(segment * map.r * 2.6, 0.0, 1.0);
 			shadow = clamp(shadow + (1.0 - shadow) * hit, 0.0, 0.92);
 			if (!(shadow >= 0.0)) return 0.0;
-			if (shadow > 0.90) break;
+			if (shadow > 0.86) break;
 		}
 		if (nextT >= farT) break;
 		if (tMax.x < tMax.y) {
@@ -301,7 +301,7 @@ void main()
 		float rim = clamp((fresnel - 0.35) * 0.35, 0, 0.25);
 		vec3 skyTint = mix(reflectColor, sunColor, 0.12);
 		float shimmer = max(0.0, gnoise(vec3(fragWorldPos.x * 1.7, fragWorldPos.z * 1.7, waterWaveCounter * 0.35))) * 0.06 * sunSpecularIntensity;
-		float surfaceFocus = getCausticLight(fragWorldPos.xyz, 0.14) * 0.025 * sunSpecularIntensity;
+		float surfaceFocus = shimmer * 0.22;
 		texColor.rgb += skyTint * openSky * cloudShadow * (0.05 + rim + shimmer + surfaceFocus);
 	}
 	
@@ -457,6 +457,7 @@ void main()
 		texColor.a += waterDepth * upness * (0.055 + length(refractWave) * 0.045) * (1 - texColor.a);
 	}
 	
+	texColor.rgb = applyMoonDirectLight(texColor.rgb, fragNormal, fogAmount);
 	
 	texColor = applyFog(texColor, fogAmount);
 	texColor.a = clamp(texColor.a + fogAmount, 0, 1);

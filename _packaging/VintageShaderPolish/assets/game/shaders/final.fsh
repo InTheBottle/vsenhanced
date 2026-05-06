@@ -73,17 +73,16 @@ vec3 ApplyOutputDither(vec3 color, float skyMask) {
 }
 
 vec3 ApplyDetailContrast(vec3 color) {
-	vec3 center = texture(primaryScene, texCoord).rgb;
+	vec3 center = color;
+	vec2 detailOffset = invFrameSize * vec2(1.0, 0.75);
 	vec3 blur =
-		texture(primaryScene, clamp(texCoord + vec2(invFrameSize.x, 0), vec2(0.0), vec2(1.0))).rgb +
-		texture(primaryScene, clamp(texCoord - vec2(invFrameSize.x, 0), vec2(0.0), vec2(1.0))).rgb +
-		texture(primaryScene, clamp(texCoord + vec2(0, invFrameSize.y), vec2(0.0), vec2(1.0))).rgb +
-		texture(primaryScene, clamp(texCoord - vec2(0, invFrameSize.y), vec2(0.0), vec2(1.0))).rgb;
-	blur *= 0.25;
+		texture(primaryScene, clamp(texCoord + detailOffset, vec2(0.0), vec2(1.0))).rgb +
+		texture(primaryScene, clamp(texCoord - detailOffset, vec2(0.0), vec2(1.0))).rgb;
+	blur *= 0.5;
 	
 	float highlightGuard = 1.0 - smoothstep(0.72, 0.95, Luma(color));
 	float darkGuard = smoothstep(0.04, 0.18, Luma(color));
-	return clamp(color + (center - blur) * 0.08 * highlightGuard * darkGuard, vec3(0.0), vec3(1.0));
+	return clamp(color + (center - blur) * 0.055 * highlightGuard * darkGuard, vec3(0.0), vec3(1.0));
 }
 
 vec3 ApplyDirectionalGrade(vec3 color) {

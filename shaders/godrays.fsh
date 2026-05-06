@@ -86,11 +86,11 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
 	if (rayStrength * screenFade <= 0.002) {
 		return vec4(0.0);
 	}
-	
+
 	float weight = rayStrength * screenFade / 30.0;
-	
+
 	int samples = int(mix(36.0, 84.0, rayStrength));
-	
+
 	// Short deltas near the sun
 	vec2 sdTuv = clampDeltas((nSunPos - uv) * max(rayStrength, 0.08) / 220 * direction);
 	
