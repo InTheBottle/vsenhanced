@@ -43,10 +43,33 @@ float Luma(vec3 color) {
 	return dot(color, vec3(0.299, 0.587, 0.114));
 }
 
-vec3 SoftHighlightRollOff(vec3 color) {
+float DICECurve(float x) {
+	x = max(0.0, x);
+	float shoulderStart = 0.58;
+	float shoulder = max(x - shoulderStart, 0.0);
+	float rolled = shoulderStart + shoulder / (1.0 + shoulder * 1.55);
+	return mix(x, rolled, smoothstep(shoulderStart, 1.65, x));
+}
+
+vec3 ApplyDICETonemap(vec3 color) {
+	color = max(color, vec3(0.0));
+	float luma = max(Luma(color), 0.0001);
+	float mappedLuma = DICECurve(luma);
+	vec3 mapped = color * (mappedLuma / luma);
+	float peak = max(max(mapped.r, mapped.g), mapped.b);
+	if (peak > 1.0) {
+		mapped /= peak;
+	}
+	return clamp(mapped, vec3(0.0), vec3(1.0));
+}
+
+vec3 ApplyOutputDither(vec3 color, float skyMask) {
+	int frameWidth = int(1.0 / invFrameSize.x + 0.5);
+	vec3 noise = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 31, frameWidth).rgb;
 	float luma = Luma(color);
-	float shoulder = 1.0 + max(luma - 0.82, 0.0) * 0.65;
-	return min(color / shoulder, vec3(1.0));
+	float gradientMask = smoothstep(0.08, 0.62, luma) * (1.0 - smoothstep(0.86, 1.0, luma));
+	float strength = mix(0.45, 1.0, skyMask) * gradientMask / 255.0;
+	return color + noise * strength;
 }
 
 vec3 ApplyDetailContrast(vec3 color) {
@@ -68,9 +91,9 @@ vec3 ApplyDirectionalGrade(vec3 color) {
 	float dusk = (1.0 - smoothstep(0.42, 0.85, dayLight)) * smoothstep(0.08, 0.38, dayLight);
 	float shadowMask = 1.0 - smoothstep(0.18, 0.58, Luma(color));
 	
-	color = mix(color, color * vec3(0.78, 0.86, 1.08) + rgbaFog.rgb * 0.04, night * 0.35);
+	color = mix(color, color * vec3(0.92, 0.98, 1.09) + rgbaFog.rgb * 0.065, night * 0.42);
 	color = mix(color, color * vec3(1.08, 0.96, 0.86), dusk * 0.18);
-	color = mix(color, color * vec3(0.92, 0.96, 1.05), shadowMask * night * 0.12);
+	color = mix(color, color * vec3(0.98, 1.02, 1.10) + vec3(0.010, 0.014, 0.026), shadowMask * night * 0.28);
 	
 	return clamp(color, vec3(0.0), vec3(1.0));
 }
@@ -128,7 +151,7 @@ vec4 ColorGrade(vec4 color) {
 	
 	// Limit brightness
 	// This was commented out, why? Seems to only affect overly bright surfaces
-	color.rgb = SoftHighlightRollOff(color.rgb);
+	color.rgb = ApplyDICETonemap(color.rgb);
 	
 	return color;	
 }
@@ -173,7 +196,7 @@ void main(void)
 	
 	#if GODRAYS > 0
 		color.rgb += vec3(1.0, 0.88, 0.68) * clamp(godrayIntensity, 0.0, 0.35) * 0.035;
-		color.rgb = SoftHighlightRollOff(color.rgb);
+		color.rgb = ApplyDICETonemap(color.rgb);
 		color.a=1;
 	#endif
 	
@@ -182,6 +205,8 @@ void main(void)
 	outColor = mix(color, gradedColor, gradedColor.a);
 	outColor.rgb = ApplyDetailContrast(outColor.rgb);
 	outColor.rgb = ApplyDirectionalGrade(outColor.rgb);
+	float skyBandMask = smoothstep(0.46, 0.82, color.b) * smoothstep(color.r + 0.03, color.b + 0.20, color.b) * smoothstep(color.g * 0.82, color.b + 0.18, color.b);
+	outColor.rgb = ApplyDICETonemap(outColor.rgb);
 	
 
 
@@ -238,8 +263,7 @@ void main(void)
 	
 	//outColor.rgb = mix(outColor.rgb, vec3(0), grayvignette);
 	
-	int frameWidth = int(1.0 / invFrameSize.x + 0.5);
-	outColor.rgb += NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 31, frameWidth).rgb * 0.05;
+	outColor.rgb = ApplyOutputDither(outColor.rgb, skyBandMask);
 	outColor.rgb = clamp(outColor.rgb, vec3(0.0), vec3(1.0));
 	outColor.a=1;
 }

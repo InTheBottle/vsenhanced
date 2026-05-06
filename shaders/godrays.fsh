@@ -43,11 +43,9 @@ float sampleCloudBreakup(vec2 uv, vec2 nSunPos, float stepIndex) {
 	vec2 mapUv = fract(vec2(0.5) + wind + ray * vec2(0.72, 0.58) + lightDrift + stepIndex * lightDrift * 0.012);
 	vec2 texel = vec2(1.0 / realCloudShadowMapWidth);
 
-	float density = texture(realCloudShadowMap, mapUv).r * 0.50;
-	density += texture(realCloudShadowMap, mapUv + texel * vec2( 1.25,  0.0)).r * 0.125;
-	density += texture(realCloudShadowMap, mapUv + texel * vec2(-1.25,  0.0)).r * 0.125;
-	density += texture(realCloudShadowMap, mapUv + texel * vec2( 0.0,  1.25)).r * 0.125;
-	density += texture(realCloudShadowMap, mapUv + texel * vec2( 0.0, -1.25)).r * 0.125;
+	float density = texture(realCloudShadowMap, mapUv).r * 0.60;
+	density += texture(realCloudShadowMap, mapUv + texel * vec2( 1.35,  0.0)).r * 0.14;
+	density += texture(realCloudShadowMap, mapUv + texel * vec2( 0.0, -1.35)).r * 0.14;
 
 	float clearGap = 1.0 - smoothstep(0.12, 0.62, density);
 	float silverEdge = smoothstep(0.08, 0.34, density) * (1.0 - smoothstep(0.48, 0.92, density));
@@ -62,8 +60,9 @@ float sampleRayMask(vec2 uv, vec2 nSunPos, float stepIndex, float rayStrength) {
 	float mask = smoothstep(0.018, 0.42, glowSample);
 	vec2 toSun = nSunPos - uv;
 	float radial = 1.0 - smoothstep(0.05, 0.92, length(toSun));
-	float atmosphericBeam = radial * rayStrength * (0.16 + 0.34 * sampleCloudBreakup(uv, nSunPos, stepIndex));
-	return max(mask, atmosphericBeam) * sampleCloudBreakup(uv, nSunPos, stepIndex);
+	float breakup = sampleCloudBreakup(uv, nSunPos, stepIndex);
+	float atmosphericBeam = radial * rayStrength * (0.16 + 0.34 * breakup);
+	return max(mask, atmosphericBeam) * breakup;
 }
 
 
@@ -84,9 +83,13 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
 	float horizonFade = smoothstep(0.02, 0.18, nSunPos.y) * (1.0 - smoothstep(0.96, 1.0, nSunPos.y));
 	float cloudVeil = sampleCloudBreakup(mix(uv, nSunPos, 0.35), nSunPos, 0.0);
 	float rayStrength = smoothstep(0.05, 0.68, intensity) * horizonFade * (0.82 + cloudVeil * 0.28);
-	float weight = rayStrength * screenFade / 36.0;
+	if (rayStrength * screenFade <= 0.002) {
+		return vec4(0.0);
+	}
 	
-	int samples = int(mix(48.0, 120.0, rayStrength));
+	float weight = rayStrength * screenFade / 30.0;
+	
+	int samples = int(mix(36.0, 84.0, rayStrength));
 	
 	// Short deltas near the sun
 	vec2 sdTuv = clampDeltas((nSunPos - uv) * max(rayStrength, 0.08) / 220 * direction);
@@ -108,7 +111,7 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
         vec3 sampleColor = texture(inputTexture, uv).rgb;
 		float airSparkle = 0.92 + 0.08 * sin(i * 2.37 + iGlobalTime * 0.7);
 		float mist = smoothstep(0.08, 0.75, i / max(float(samples), 1.0));
-        col.rgb += mix(rayColor, sampleColor * rayColor, 0.14 + mist * 0.08) * mask * weight * airSparkle * 1.45;
+        col.rgb += mix(rayColor, sampleColor * rayColor, 0.14 + mist * 0.08) * mask * weight * airSparkle * 1.34;
         col.a += mask * weight * 1.30;
         weight *= decay;
 		

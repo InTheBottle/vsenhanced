@@ -30,6 +30,9 @@ void main(void)
 	// https://www.toolfk.com/online-plotter-frame/#W3sidHlwZSI6MCwiZXEiOiJtYXgoMSwxLjc1KigxLTYqYWJzKHgtMC4yMikpKSIsImNvbG9yIjoiIzAwMDAwMCJ9LHsidHlwZSI6MTAwMCwid2luZG93IjpbIi0xIiwiMSIsIjAiLCIyIl19XQ--
 	float dawnMul = max(1.0, (1.0 - dusk) * 2.0 * (1.0 - 6.0 * abs(sunPos3dIn.y - 0.1)));
 	float daylightFade = smoothstep(-0.04, 0.16, sunPos3dIn.y) * (1.0 - smoothstep(0.92, 1.0, sunPos3dIn.y));
+	float moonDisc = 1.0 - smoothstep(-0.85, -0.05, directionIn);
+	float moonHeight = clamp(-sunPos3dIn.y, 0.0, 1.0);
+	float moonFade = moonDisc * smoothstep(0.03, 0.28, moonHeight) * (1.0 - smoothstep(0.86, 1.0, moonHeight));
 	
-	intensity = clamp(0.42 * dawnMul * daylightFade, 0.0, 0.58); 
+	intensity = clamp(max(0.42 * dawnMul * daylightFade, 0.13 * moonFade), 0.0, 0.58);
 }

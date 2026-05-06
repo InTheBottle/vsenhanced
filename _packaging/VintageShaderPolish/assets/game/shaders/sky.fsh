@@ -24,6 +24,18 @@ layout(location = 3) out vec4 outGPosition;
 #include skycolor.fsh
 #include underwatereffects.fsh
 
+vec3 ApplySkyGradientDither(vec3 color) {
+	vec3 p = vec3(gl_FragCoord.xy, 73.0);
+	vec3 noise = fract(sin(vec3(
+		dot(p, vec3(12.9898, 78.233, 37.719)),
+		dot(p, vec3(39.3468, 11.135, 83.155)),
+		dot(p, vec3(73.156, 52.235, 9.151))
+	)) * 43758.5453) - vec3(0.5);
+	float luma = dot(color, vec3(0.299, 0.587, 0.114));
+	float gradientMask = smoothstep(0.04, 0.48, luma) * (1.0 - smoothstep(0.88, 1.0, luma));
+	return color + noise * gradientMask * (0.85 / 255.0);
+}
+
 void main()
 {
 	outColor = vec4(1);
@@ -35,6 +47,7 @@ void main()
 	
 	float murkiness = max(0.0, getSkyMurkiness() - 14*fogDensityIn);
 	outColor.rgb = applyUnderwaterEffects(outColor.rgb, murkiness);
+	outColor.rgb = ApplySkyGradientDither(outColor.rgb);
 	
 	outColor.rgb += vec3(0.1, 0.5, 0.1) * nightVisionStrengthv;
 	outGlow.y *= clamp((dayLight - 0.05) * 2 - 50*murkiness, 0, 1);

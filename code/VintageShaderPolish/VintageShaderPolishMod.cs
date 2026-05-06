@@ -193,7 +193,7 @@ internal static class RealCloudShadowState
             }
 
             Vec3f sun = GetUpwardSunDirection();
-            float daylight = api.World.Calendar.DayLightStrength;
+            float daylight = GetCelestialLightStrength();
             bool shouldBindCloudMap = ShouldBindCloudMap(shader, wantsCloudSampler);
             bool hasCloudState = CloudMapTextureId > 0 && CloudMapWidth > 1f && CloudOffset is { };
 
@@ -315,6 +315,22 @@ internal static class RealCloudShadowState
         Vec3f sun = api!.World.Calendar.SunPositionNormalized;
         return sun.Y < 0 ? new Vec3f(-sun.X, -sun.Y, -sun.Z) : sun;
     }
+
+    private static float GetCelestialLightStrength()
+    {
+        Vec3f sun = api!.World.Calendar.SunPositionNormalized;
+        float daylight = api.World.Calendar.DayLightStrength;
+        if (sun.Y >= 0f)
+        {
+            return daylight;
+        }
+
+        float moonElevation = Math.Clamp(-sun.Y, 0f, 1f);
+        float moonlight = SmoothStep(Math.Clamp((moonElevation - 0.03f) / 0.42f, 0f, 1f)) * 0.32f;
+        return Math.Max(daylight, moonlight);
+    }
+
+    private static float SmoothStep(float value) => value * value * (3f - 2f * value);
 
     private static float GetDropletIntensity()
     {

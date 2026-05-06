@@ -38,6 +38,8 @@ void main () {
 	float twinkle = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 41, horizontalResolution).x;
 	skyCol.rgb *= 1.0 - horizonExtinction * (0.35 + 0.2 * horizonFog);
 	skyCol.rgb += skyCol.rgb * starMask * twinkle * 0.025 * (1.0 - horizonExtinction);
+	float nightFactor = 1.0 - smoothstep(0.06, 0.32, dayLight);
+	skyCol.rgb += vec3(0.018, 0.025, 0.052) * nightFactor * (1.0 - horizonExtinction * 0.55);
 	skyCol.a = max(0.0, 1 - 2*(dayLight - 0.05));
 	
 	outColor = skyCol;

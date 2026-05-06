@@ -10,6 +10,7 @@ uniform float cloudMapWidth;
 uniform float realCloudShadowMapWidth;
 uniform vec3 cloudOffset;
 uniform vec3 realCloudShadowLightDir;
+uniform float realCloudShadowDaylight;
 uniform int frame;
 uniform float time;
 uniform int FrameWidth;
@@ -168,7 +169,8 @@ float getVolumetricCloudRaySource(vec3 viewDir, float alpha) {
 	float body = smoothstep(0.04, 0.44, alpha) * (1.0 - smoothstep(0.80, 1.0, alpha));
 	float veil = smoothstep(0.02, 0.34, alpha) * (1.0 - smoothstep(0.92, 1.0, alpha));
 	float elevation = smoothstep(0.018, 0.16, lightDir.y);
-	return clamp((edge * 0.82 + body * 0.28 + veil * 0.20) * pow(facing, 3.8) * elevation, 0.0, 0.92);
+	float celestial = clamp(realCloudShadowDaylight, 0.0, 1.0);
+	return clamp((edge * 0.82 + body * 0.28 + veil * 0.20) * pow(facing, 3.8) * elevation * celestial, 0.0, 0.92);
 }
 
 void main(){
