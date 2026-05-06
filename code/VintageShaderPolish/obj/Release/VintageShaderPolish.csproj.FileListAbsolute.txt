@@ -1,0 +1,5 @@
+D:\Repositories\vs\code\VintageShaderPolish\obj\Release\VintageShaderPolish.csproj.AssemblyReference.cache
+D:\Repositories\vs\code\VintageShaderPolish\obj\Release\VintageShaderPolish.GeneratedMSBuildEditorConfig.editorconfig
+D:\Repositories\vs\code\VintageShaderPolish\obj\Release\VintageShaderPolish.AssemblyInfoInputs.cache
+D:\Repositories\vs\code\VintageShaderPolish\obj\Release\VintageShaderPolish.AssemblyInfo.cs
+D:\Repositories\vs\code\VintageShaderPolish\obj\Release\VintageShaderPolish.csproj.CoreCompileInputs.cache
