@@ -217,7 +217,7 @@ internal static class RealCloudShadowState
             }
             if (wantsCloudStrength)
             {
-                shader.Uniform("realCloudShadowStrength", hasCloudState ? 1.35f : 0f);
+                shader.Uniform("realCloudShadowStrength", hasCloudState ? 1.45f : 0f);
             }
 
             if (!hasCloudState)
