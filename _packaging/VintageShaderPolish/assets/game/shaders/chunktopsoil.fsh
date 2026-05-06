@@ -147,9 +147,9 @@ float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	if (!(cloud >= 0.0)) cloud = 0.0;
 	cloud = clamp(cloud, 0.0, 1.0);
 	float strength = clamp(cloud * upness * daylight * fogFade, 0.0, 1.0);
-	float shadow = 1.0 - strength * 0.28;
+	float shadow = 1.0 - strength * 0.34;
 	if (!(shadow >= 0.0)) return 1.0;
-	return clamp(shadow, 0.72, 1.0);
+	return clamp(shadow, 0.66, 1.0);
 }
 
 void main() 
@@ -222,5 +222,6 @@ void main()
 	outColor = vec4((normal.x + 1) / 2, (normal.y + 1)/2, (normal.z+1)/2, 1);	
 #endif
 
-    outGlow = vec4(glowLevel + glow, 0, 0, outColor.a);
+	float vspScatter = calculateVspVolumetricScatter(worldPos.xyz, normal, fogAmount);
+    outGlow = vec4(glowLevel + glow, vspScatter, 0, outColor.a);
 }

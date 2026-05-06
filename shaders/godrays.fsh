@@ -56,12 +56,13 @@ float sampleCloudBreakup(vec2 uv, vec2 nSunPos, float stepIndex) {
 float sampleRayMask(vec2 uv, vec2 nSunPos, float stepIndex, float rayStrength) {
 	vec4 glowData = texture(glowParts, uv);
 	float cloudEdgeSource = smoothstep(0.04, 0.42, glowData.a) * (1.0 - smoothstep(0.76, 1.0, glowData.a));
-	float glowSample = glowData.g * 1.45 + cloudEdgeSource * rayStrength * 0.72;
-	float mask = smoothstep(0.018, 0.42, glowSample);
+	float volumeShaft = smoothstep(0.025, 0.58, glowData.g);
+	float glowSample = glowData.g * 2.05 + cloudEdgeSource * rayStrength * 0.95;
+	float mask = max(smoothstep(0.012, 0.36, glowSample), volumeShaft * rayStrength);
 	vec2 toSun = nSunPos - uv;
 	float radial = 1.0 - smoothstep(0.05, 0.92, length(toSun));
 	float breakup = sampleCloudBreakup(uv, nSunPos, stepIndex);
-	float atmosphericBeam = radial * rayStrength * (0.16 + 0.34 * breakup);
+	float atmosphericBeam = radial * rayStrength * (0.20 + 0.42 * breakup);
 	return max(mask, atmosphericBeam) * breakup;
 }
 
@@ -82,12 +83,12 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
 	float screenFade = smoothstep(1.15, 0.12, radialDistance);
 	float horizonFade = smoothstep(0.02, 0.18, nSunPos.y) * (1.0 - smoothstep(0.96, 1.0, nSunPos.y));
 	float cloudVeil = sampleCloudBreakup(mix(uv, nSunPos, 0.35), nSunPos, 0.0);
-	float rayStrength = smoothstep(0.05, 0.68, intensity) * horizonFade * (0.82 + cloudVeil * 0.28);
+	float rayStrength = smoothstep(0.045, 0.64, intensity) * horizonFade * (0.92 + cloudVeil * 0.34);
 	if (rayStrength * screenFade <= 0.002) {
 		return vec4(0.0);
 	}
 
-	float weight = rayStrength * screenFade / 30.0;
+	float weight = rayStrength * screenFade / 27.0;
 
 	int samples = int(mix(36.0, 84.0, rayStrength));
 
@@ -102,7 +103,7 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
 	
 	vec3 rayColor = getSunRayColor(nSunPos);
 	float glow = sampleRayMask(uv, nSunPos, 0.0, rayStrength);
-	vec4 col = vec4(texture(inputTexture, uv).rgb * glow * rayColor * 0.42, glow * 0.34);
+	vec4 col = vec4(texture(inputTexture, uv).rgb * glow * rayColor * 0.46, glow * 0.38);
     
     for (float i=0.0; i < samples; i++) {
 		uv.x = clamp(uv.x + dTuv.x, 0, 1);
@@ -111,8 +112,8 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
         vec3 sampleColor = texture(inputTexture, uv).rgb;
 		float airSparkle = 0.92 + 0.08 * sin(i * 2.37 + iGlobalTime * 0.7);
 		float mist = smoothstep(0.08, 0.75, i / max(float(samples), 1.0));
-        col.rgb += mix(rayColor, sampleColor * rayColor, 0.14 + mist * 0.08) * mask * weight * airSparkle * 1.34;
-        col.a += mask * weight * 1.30;
+        col.rgb += mix(rayColor, sampleColor * rayColor, 0.14 + mist * 0.08) * mask * weight * airSparkle * 1.48;
+        col.a += mask * weight * 1.42;
         weight *= decay;
 		
 		dTuv = mix(sdTuv, ldTuv, i/samples);
@@ -121,7 +122,7 @@ vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
 	// Seems to greatly reduce the sun turning into one massive white blob
 	float luma = dot(col.rgb, vec3(0.299, 0.587, 0.114));
 	col.rgb *= 1.0 - smoothstep(0.58, 1.16, luma) * 0.24;
-	col.rgb = min(col.rgb, vec3(0.72));
+	col.rgb = min(col.rgb, vec3(0.86));
 	
 	col.a = min(1.0, col.a);
 	

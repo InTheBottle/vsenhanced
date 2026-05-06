@@ -170,5 +170,6 @@ void main()
 #endif	
 
     OIT(texColor, glowLevel);
+	outGlow.y = max(outGlow.y, calculateVspVolumetricScatter(worldPos.xyz, normal, fogAmount));
 
 }

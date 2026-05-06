@@ -465,5 +465,6 @@ void main()
 	texColor = applySpheresFog(texColor, fogAmount, fWorldPos.xyz);
 
 	OIT(texColor, glowLevel);
+	outGlow.y = max(outGlow.y, calculateVspVolumetricScatter(fWorldPos.xyz, fragNormal, fogAmount));
 	
 }

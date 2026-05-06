@@ -222,7 +222,8 @@ void main()
 	outColor = vec4((normal.x + 1) / 2, (normal.y + 1)/2, (normal.z+1)/2, 1);	
 #endif
 	
-	outGlow = vec4(glowLevel + glow, godrayLevel, 0, min(1, fogAmount + outColor.a));
+	float vspScatter = calculateVspVolumetricScatter(worldPos.xyz, normal, fogAmount);
+	outGlow = vec4(glowLevel + glow, max(godrayLevel, vspScatter), 0, min(1, fogAmount + outColor.a));
 	
 //	outColor=vec4(1);
 }

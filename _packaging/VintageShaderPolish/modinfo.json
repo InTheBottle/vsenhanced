@@ -4,7 +4,7 @@
   "name": "Vintage Shader Polish",
   "description": "Visual polish for Vintage Story: bloom, fog, water, clouds, SSAO, night sky, and sun-relative cloud-shadow shader binding.",
   "authors": ["ronni"],
-  "version": "0.1.27",
+  "version": "0.1.28",
   "dependencies": {
     "game": ""
   }

@@ -34,5 +34,5 @@ void main(void)
 	float moonHeight = clamp(-sunPos3dIn.y, 0.0, 1.0);
 	float moonFade = moonDisc * smoothstep(0.03, 0.28, moonHeight) * (1.0 - smoothstep(0.86, 1.0, moonHeight));
 	
-	intensity = clamp(max(0.42 * dawnMul * daylightFade, 0.13 * moonFade), 0.0, 0.58);
+	intensity = clamp(max(0.42 * dawnMul * daylightFade, 0.18 * moonFade), 0.0, 0.58);
 }

@@ -29,5 +29,5 @@ void main(void)
 	float moonHeight = clamp(-sunPos3dIn.y, 0.0, 1.0);
 	float moonFade = smoothstep(0.03, 0.28, moonHeight) * (1.0 - smoothstep(0.86, 1.0, moonHeight));
 	
-	godrayIntensity = max(max(0.0, daylightFade * dawnDuskMul - nightFade) / 2.0, moonFade * 0.075);
+	godrayIntensity = max(max(0.0, daylightFade * dawnDuskMul - nightFade) / 2.0, moonFade * 0.095);
 }
