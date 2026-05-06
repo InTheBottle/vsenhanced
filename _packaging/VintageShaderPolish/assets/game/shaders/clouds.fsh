@@ -36,17 +36,19 @@ vec3 applyCloudLighting(vec3 baseColor, vec3 skyGlowColor, float skyGlowAlpha, v
 	float highness = clamp(skyDir.y * 0.5 + 0.5, 0.0, 1.0);
 	float breakup = 0.92 + 0.08 * gnoise(vec3(cloudPos.xz * 0.006, windWaveCounter * 0.03));
 	
-	float rim = pow(sunFacing, 6.0) * edge * skyGlowAlpha * (1.0 - fogAmount);
-	float forwardScatter = pow(sunFacing, 2.2) * skyGlowAlpha * (0.35 + 0.65 * edge) * (1.0 - fogAmount);
-	float bodyShadow = density * (0.10 + 0.12 * (1.0 - highness)) * (1.0 - rim * 0.5) * (1.0 - fogAmount);
+	float rim = pow(sunFacing, 5.2) * edge * skyGlowAlpha * (1.0 - fogAmount);
+	float forwardScatter = pow(sunFacing, 1.55) * skyGlowAlpha * (0.34 + 0.86 * edge) * (1.0 - fogAmount);
+	float throughLight = pow(sunFacing, 9.0) * skyGlowAlpha * smoothstep(0.12, 0.82, alpha) * (1.0 - smoothstep(0.92, 1.0, alpha)) * (1.0 - fogAmount);
+	float silverLining = pow(sunFacing, 14.0) * edge * (0.45 + 0.55 * skyGlowAlpha) * (1.0 - fogAmount);
+	float bodyShadow = density * (0.08 + 0.10 * (1.0 - highness)) * (1.0 - rim * 0.55) * (1.0 - throughLight * 0.35) * (1.0 - fogAmount);
 	float underside = density * smoothstep(0.2, 0.85, 1.0 - highness) * (1.0 - fogAmount);
 	
-	vec3 warmLight = mix(vec3(1.0), skyGlowColor, clamp(skyGlowAlpha + 0.25, 0.0, 1.0));
+	vec3 warmLight = mix(vec3(1.0, 0.94, 0.82), skyGlowColor * vec3(1.10, 0.96, 0.82), clamp(skyGlowAlpha + 0.35, 0.0, 1.0));
 	vec3 coolFill = mix(rgbaFog.rgb, vec3(0.72, 0.80, 0.92), 0.35);
 	
 	baseColor *= 1.0 - bodyShadow * breakup;
-	baseColor = mix(baseColor, baseColor * coolFill, underside * 0.16);
-	baseColor += warmLight * (rim * 0.42 + forwardScatter * 0.14) * breakup;
+	baseColor = mix(baseColor, baseColor * coolFill, underside * 0.12);
+	baseColor += warmLight * (rim * 0.55 + forwardScatter * 0.24 + throughLight * 0.32 + silverLining * 0.18) * breakup;
 	
 	return baseColor;
 }
@@ -56,12 +58,13 @@ float getCloudRaySource(vec3 cloudPos, float alpha, float skyGlowAlpha, float fo
 	vec3 sunDir = normalize(sunPosition);
 	float sunFacing = max(0.0, dot(skyDir, sunDir));
 	float thinFade = 1.0 - thinCloudMode * 0.65;
-	float edge = smoothstep(0.035, 0.24, alpha) * (1.0 - smoothstep(0.42, 0.92, alpha));
-	float bodyGlow = smoothstep(0.16, 0.52, alpha) * (1.0 - smoothstep(0.70, 1.0, alpha));
+	float edge = smoothstep(0.025, 0.26, alpha) * (1.0 - smoothstep(0.48, 0.95, alpha));
+	float bodyGlow = smoothstep(0.10, 0.58, alpha) * (1.0 - smoothstep(0.78, 1.0, alpha));
 	float breakup = 0.86 + 0.14 * gnoise(vec3(cloudPos.xz * 0.01, windWaveCounter * 0.025));
-	float forward = pow(sunFacing, 4.5);
-	float halo = pow(sunFacing, 12.0) * (1.0 - smoothstep(0.78, 1.0, alpha));
-	return clamp((edge * 0.42 + bodyGlow * 0.16 + halo * 0.24) * forward * skyGlowAlpha * (1.0 - fogAmount) * thinFade * breakup, 0.0, 0.55);
+	float forward = pow(sunFacing, 3.4);
+	float halo = pow(sunFacing, 10.0) * (1.0 - smoothstep(0.82, 1.0, alpha));
+	float veil = pow(sunFacing, 1.8) * smoothstep(0.08, 0.55, alpha) * (1.0 - smoothstep(0.90, 1.0, alpha));
+	return clamp((edge * 0.66 + bodyGlow * 0.26 + halo * 0.34 + veil * 0.20) * forward * skyGlowAlpha * (1.0 - fogAmount) * thinFade * breakup, 0.0, 0.82);
 }
 
 void main()

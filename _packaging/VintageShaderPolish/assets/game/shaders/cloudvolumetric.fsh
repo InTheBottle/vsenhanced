@@ -165,10 +165,11 @@ float getVolumetricCloudRaySource(vec3 viewDir, float alpha) {
 
 	vec3 lightDir = normalize(realCloudShadowLightDir);
 	float facing = max(0.0, dot(viewDir, lightDir));
-	float edge = smoothstep(0.015, 0.22, alpha) * (1.0 - smoothstep(0.58, 0.96, alpha));
-	float body = smoothstep(0.06, 0.38, alpha) * (1.0 - smoothstep(0.72, 1.0, alpha));
-	float elevation = smoothstep(0.025, 0.18, lightDir.y);
-	return clamp((edge * 0.55 + body * 0.16) * pow(facing, 5.0) * elevation, 0.0, 0.62);
+	float edge = smoothstep(0.010, 0.26, alpha) * (1.0 - smoothstep(0.64, 0.98, alpha));
+	float body = smoothstep(0.04, 0.44, alpha) * (1.0 - smoothstep(0.80, 1.0, alpha));
+	float veil = smoothstep(0.02, 0.34, alpha) * (1.0 - smoothstep(0.92, 1.0, alpha));
+	float elevation = smoothstep(0.018, 0.16, lightDir.y);
+	return clamp((edge * 0.82 + body * 0.28 + veil * 0.20) * pow(facing, 3.8) * elevation, 0.0, 0.92);
 }
 
 void main(){

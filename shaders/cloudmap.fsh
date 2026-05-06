@@ -99,17 +99,19 @@ vec3 applyCloudLighting(vec3 baseColor, vec3 skyGlowColor, float skyGlowAlpha, v
     float highness = clamp(skyDir.y * 0.5 + 0.5, 0.0, 1.0);
     float breakup = 0.92 + 0.08 * gnoise(vec3((cloudPos.xz + mapOffsetCentre) * 0.006, time * 0.05));
     
-    float rim = pow(sunFacing, 6.0) * edge * skyGlowAlpha * (1.0 - fogAmount);
-    float forwardScatter = pow(sunFacing, 2.0) * skyGlowAlpha * (0.35 + 0.65 * edge) * (1.0 - fogAmount);
-    float bodyShadow = density * (0.10 + 0.12 * (1.0 - highness)) * (1.0 - rim * 0.5) * (1.0 - fogAmount);
+    float rim = pow(sunFacing, 5.0) * edge * skyGlowAlpha * (1.0 - fogAmount);
+    float forwardScatter = pow(sunFacing, 1.45) * skyGlowAlpha * (0.34 + 0.86 * edge) * (1.0 - fogAmount);
+    float throughLight = pow(sunFacing, 8.5) * skyGlowAlpha * smoothstep(0.12, 0.82, alpha) * (1.0 - smoothstep(0.92, 1.0, alpha)) * (1.0 - fogAmount);
+    float silverLining = pow(sunFacing, 13.0) * edge * (0.45 + 0.55 * skyGlowAlpha) * (1.0 - fogAmount);
+    float bodyShadow = density * (0.08 + 0.10 * (1.0 - highness)) * (1.0 - rim * 0.55) * (1.0 - throughLight * 0.35) * (1.0 - fogAmount);
     float underside = density * smoothstep(0.2, 0.85, 1.0 - highness) * (1.0 - fogAmount);
     
-    vec3 warmLight = mix(vec3(1.0), skyGlowColor, clamp(skyGlowAlpha + 0.25, 0.0, 1.0));
+    vec3 warmLight = mix(vec3(1.0, 0.94, 0.82), skyGlowColor * vec3(1.10, 0.96, 0.82), clamp(skyGlowAlpha + 0.35, 0.0, 1.0));
     vec3 coolFill = mix(rgbaFogIn.rgb, vec3(0.72, 0.80, 0.92), 0.35);
     
     baseColor *= 1.0 - bodyShadow * breakup;
-    baseColor = mix(baseColor, baseColor * coolFill, underside * 0.16);
-    baseColor += warmLight * (rim * 0.42 + forwardScatter * 0.14) * breakup;
+    baseColor = mix(baseColor, baseColor * coolFill, underside * 0.12);
+    baseColor += warmLight * (rim * 0.55 + forwardScatter * 0.24 + throughLight * 0.32 + silverLining * 0.18) * breakup;
     
     return baseColor;
 }

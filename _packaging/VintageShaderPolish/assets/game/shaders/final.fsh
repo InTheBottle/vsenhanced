@@ -189,7 +189,7 @@ void main(void)
 	vec2 position = (gl_FragCoord.xy * invFrameSize.xy) - vec2(0.5);
 	float grayvignette = 1 - smoothstep(1.1, 0.75 - 0.45, length(position));
 	float edgeAmount = smoothstep(0.25, 0.75, length(position));
-	float chromaStrength = clamp((damageVignetting + frostVignetting * 0.5 + glitchEffectStrength) * edgeAmount * 0.003, 0.0, 0.003);
+	float chromaStrength = clamp((frostVignetting * 0.5 + glitchEffectStrength) * edgeAmount * 0.003, 0.0, 0.003);
 	if (chromaStrength > 0.0) {
 		vec2 chromaDir = normalize(position + vec2(0.0001)) * chromaStrength;
 		outColor.r = texture(primaryScene, clamp(texCoord + chromaDir, vec2(0.0), vec2(1.0))).r;
@@ -229,13 +229,11 @@ void main(void)
 		
 		g*=damageVignetting;
 		
-		vec3 vignetteColor = vec3(0.8 * damageVignetting/2, 0, 0);
-		
 		float centerness = pow(1 - abs(damageVignettingSide), 3);
-		
 		float side = clamp(centerness + pow(mix(texCoord.x, 1 - texCoord.x, (1 + damageVignettingSide) / 2), 1.5), 0, 1);
-		
-		outColor.rgb = mix(outColor.rgb, vignetteColor, max(0.0, str - g) * side);
+		float damageMask = max(0.0, str - g) * side;
+		vec3 bloodTint = vec3(0.52, 0.035, 0.02) * (0.65 + damageVignetting * 0.35);
+		outColor.rgb = mix(outColor.rgb, outColor.rgb * vec3(0.42, 0.12, 0.10) + bloodTint, damageMask);
 	}
 	
 	//outColor.rgb = mix(outColor.rgb, vec3(0), grayvignette);
