@@ -1,5 +1,6 @@
 using HarmonyLib;
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -18,6 +19,7 @@ public sealed class VintageShaderPolishMod : ModSystem
 
     public override void StartClientSide(ICoreClientAPI api)
     {
+        RealCloudShadowState.Reset();
         RealCloudShadowState.SetApi(api);
         harmony = new Harmony(HarmonyId);
         harmony.PatchAll(typeof(VintageShaderPolishMod).Assembly);
@@ -45,6 +47,7 @@ internal static class RealCloudShadowState
     private static bool loggedFirstWetness;
     private static float smoothedDropletIntensity;
     private static long lastWetnessUpdateMs;
+    private static readonly HashSet<string> loggedBindPasses = new();
     private static ICoreClientAPI? api;
     private static readonly FieldInfo? CloudRendererTextureMapField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "TextureMap");
     private static readonly FieldInfo? CloudRendererOffsetField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "offset");
@@ -53,6 +56,24 @@ internal static class RealCloudShadowState
     internal static int CloudMapTextureId { get; set; }
     internal static float CloudMapWidth { get; set; }
     internal static Vec3f? CloudOffset { get; set; }
+
+    internal static void Reset()
+    {
+        disabledAfterError = false;
+        loggedMissingState = false;
+        loggedFirstTexture = false;
+        loggedFirstWidth = false;
+        loggedFirstOffset = false;
+        loggedFirstBind = false;
+        loggedFirstRendererCapture = false;
+        loggedFirstWetness = false;
+        smoothedDropletIntensity = 0f;
+        lastWetnessUpdateMs = 0;
+        CloudMapTextureId = 0;
+        CloudMapWidth = 0f;
+        CloudOffset = null;
+        loggedBindPasses.Clear();
+    }
 
     internal static void SetApi(ICoreClientAPI clientApi) => api = clientApi;
 
@@ -227,6 +248,17 @@ internal static class RealCloudShadowState
                     sun.X,
                     sun.Y,
                     sun.Z
+                );
+            }
+
+            if (shader.PassName is "chunkopaque" or "chunktopsoil" or "chunktransparent" or "chunkliquid"
+                && loggedBindPasses.Add(shader.PassName))
+            {
+                api.Logger.Notification(
+                    "Vintage Shader Polish: cloud shadow map bound to terrain shader {0}. tex={1}, width={2}.",
+                    shader.PassName,
+                    CloudMapTextureId,
+                    CloudMapWidth
                 );
             }
         }

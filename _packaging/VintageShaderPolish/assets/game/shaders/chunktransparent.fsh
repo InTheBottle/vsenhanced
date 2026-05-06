@@ -134,9 +134,9 @@ float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	if (!(cloud >= 0.0)) cloud = 0.0;
 	cloud = clamp(cloud, 0.0, 1.0);
 	float strength = clamp(cloud * upness * daylight * fogFade, 0.0, 1.0);
-	float shadow = 1.0 - strength * 0.20;
+	float shadow = 1.0 - strength * 0.28;
 	if (!(shadow >= 0.0)) return 1.0;
-	return clamp(shadow, 0.78, 1.0);
+	return clamp(shadow, 0.72, 1.0);
 }
 
 void main() 
@@ -159,7 +159,7 @@ void main()
 	}	
 	
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
-	float vspLitGuard = smoothstep(0.035, 0.18, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));
+	float vspLitGuard = smoothstep(0.015, 0.09, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));
 	texColor.rgb *= mix(1.0, vspCloudShadow, vspLitGuard);
 	
 
