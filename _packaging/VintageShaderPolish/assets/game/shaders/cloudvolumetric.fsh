@@ -5,7 +5,6 @@ uniform mat4 iMvpMatrix;
 uniform sampler2D depthTex;
 uniform sampler2D cloudMap;
 uniform sampler2D cloudCol;
-uniform sampler2D realCloudShadowMap;
 uniform sampler2D liquidDepth;
 uniform float cloudMapWidth;
 uniform float realCloudShadowMapWidth;

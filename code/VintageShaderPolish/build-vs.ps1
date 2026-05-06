@@ -13,6 +13,7 @@ $refs = @()
 $refs += Get-ChildItem "$netCoreRef\*.dll" | ForEach-Object { "/r:$($_.FullName)" }
 $refs += Get-ChildItem "$desktopRef\*.dll" | ForEach-Object { "/r:$($_.FullName)" }
 $refs += "/r:$game\Lib\0Harmony.dll"
+$refs += "/r:$game\Lib\OpenTK.Graphics.dll"
 $refs += "/r:$game\VintagestoryAPI.dll"
 $refs += "/r:$game\VintagestoryLib.dll"
 

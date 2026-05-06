@@ -1,4 +1,5 @@
 using HarmonyLib;
+using OpenTK.Graphics.OpenGL;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -36,7 +37,7 @@ public sealed class VintageShaderPolishMod : ModSystem
 
 internal static class RealCloudShadowState
 {
-    private const int CloudMapTextureUnit = 12;
+    private const int CloudMapTextureUnit = 15;
     private static bool disabledAfterError;
     private static bool loggedMissingState;
     private static bool loggedFirstTexture;
@@ -166,10 +167,15 @@ internal static class RealCloudShadowState
             return;
         }
 
-        bool wantsCloudMap = shader.HasUniform("realCloudShadowMap");
+        bool wantsCloudSampler = shader.HasUniform("realCloudShadowMap");
+        bool wantsCloudMapWidth = shader.HasUniform("realCloudShadowMapWidth");
+        bool wantsCloudOffset = shader.HasUniform("realCloudShadowOffset");
+        bool wantsCloudStrength = shader.HasUniform("realCloudShadowStrength");
         bool wantsLightDirection = shader.HasUniform("realCloudShadowLightDir");
+        bool wantsDaylight = shader.HasUniform("realCloudShadowDaylight");
         bool wantsWetness = shader.HasUniform("dropletIntensity");
-        if (!wantsCloudMap && !wantsLightDirection && !wantsWetness)
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight;
+        if (!wantsCloudState && !wantsWetness)
         {
             return;
         }
@@ -181,24 +187,36 @@ internal static class RealCloudShadowState
                 shader.Uniform("dropletIntensity", GetDropletIntensity());
             }
 
-            Vec3f sun = GetUpwardSunDirection();
-            if (wantsLightDirection)
-            {
-                shader.Uniform("realCloudShadowLightDir", sun);
-            }
-            if (shader.HasUniform("realCloudShadowDaylight"))
-            {
-                shader.Uniform("realCloudShadowDaylight", api.World.Calendar.DayLightStrength);
-            }
-
-            if (!wantsCloudMap)
+            if (!wantsCloudState)
             {
                 return;
             }
 
-            if (CloudMapTextureId <= 0 || CloudMapWidth <= 1f || CloudOffset is not { } offset)
+            Vec3f sun = GetUpwardSunDirection();
+            float daylight = api.World.Calendar.DayLightStrength;
+            bool shouldBindCloudMap = ShouldBindCloudMap(shader, wantsCloudSampler);
+            bool hasCloudState = CloudMapTextureId > 0 && CloudMapWidth > 1f && CloudOffset is { };
+
+            if (wantsLightDirection)
             {
-                if (!loggedMissingState && shader.PassName is "chunkopaque" or "chunktopsoil" or "chunktransparent" or "chunkliquid")
+                shader.Uniform("realCloudShadowLightDir", sun);
+            }
+            if (wantsDaylight)
+            {
+                shader.Uniform("realCloudShadowDaylight", daylight);
+            }
+            if (wantsCloudMapWidth)
+            {
+                shader.Uniform("realCloudShadowMapWidth", hasCloudState ? CloudMapWidth : 0f);
+            }
+            if (wantsCloudStrength)
+            {
+                shader.Uniform("realCloudShadowStrength", hasCloudState ? 1.35f : 0f);
+            }
+
+            if (!hasCloudState)
+            {
+                if (!loggedMissingState && IsTerrainPass(shader.PassName))
                 {
                     loggedMissingState = true;
                     api.Logger.Notification(
@@ -212,26 +230,30 @@ internal static class RealCloudShadowState
                 return;
             }
 
-            shader.BindTexture2D("realCloudShadowMap", CloudMapTextureId, CloudMapTextureUnit);
-            if (shader.HasUniform("realCloudShadowMapWidth"))
-            {
-                shader.Uniform("realCloudShadowMapWidth", CloudMapWidth);
-            }
-            if (shader.HasUniform("realCloudShadowOffset"))
+            Vec3f offset = CloudOffset!;
+            if (wantsCloudOffset)
             {
                 shader.Uniform("realCloudShadowOffset", offset);
             }
-            if (shader.HasUniform("realCloudShadowStrength"))
+
+            if (!shouldBindCloudMap)
             {
-                shader.Uniform("realCloudShadowStrength", 1.35f);
+                return;
+            }
+
+            BindCloudMap(shader);
+
+            if (wantsCloudMapWidth)
+            {
+                shader.Uniform("realCloudShadowMapWidth", CloudMapWidth);
             }
             if (wantsLightDirection)
             {
                 shader.Uniform("realCloudShadowLightDir", sun);
             }
-            if (shader.HasUniform("realCloudShadowDaylight"))
+            if (wantsDaylight)
             {
-                shader.Uniform("realCloudShadowDaylight", api.World.Calendar.DayLightStrength);
+                shader.Uniform("realCloudShadowDaylight", daylight);
             }
 
             if (!loggedFirstBind)
@@ -251,14 +273,14 @@ internal static class RealCloudShadowState
                 );
             }
 
-            if (shader.PassName is "chunkopaque" or "chunktopsoil" or "chunktransparent" or "chunkliquid"
-                && loggedBindPasses.Add(shader.PassName))
+            if (IsTerrainPass(shader.PassName) && loggedBindPasses.Add(shader.PassName))
             {
                 api.Logger.Notification(
-                    "Vintage Shader Polish: cloud shadow map bound to terrain shader {0}. tex={1}, width={2}.",
+                    "Vintage Shader Polish: cloud shadow map bound to terrain shader {0}. tex={1}, width={2}, unit={3}.",
                     shader.PassName,
                     CloudMapTextureId,
-                    CloudMapWidth
+                    CloudMapWidth,
+                    CloudMapTextureUnit
                 );
             }
         }
@@ -267,6 +289,25 @@ internal static class RealCloudShadowState
             disabledAfterError = true;
             api?.Logger.Error("Vintage Shader Polish: disabled cloud shadow bind after error: {0}", ex);
         }
+    }
+
+    private static bool IsTerrainPass(string passName) => passName is "chunkopaque" or "chunktopsoil" or "chunktransparent" or "chunkliquid";
+
+    private static bool ShouldBindCloudMap(ShaderProgramBase shader, bool hasSampler)
+    {
+        if (!hasSampler)
+        {
+            return false;
+        }
+
+        return IsTerrainPass(shader.PassName) || shader.PassName == "godrays";
+    }
+
+    private static void BindCloudMap(ShaderProgramBase shader)
+    {
+        int previousActiveTexture = GL.GetInteger(GetPName.ActiveTexture);
+        shader.BindTexture2D("realCloudShadowMap", CloudMapTextureId, CloudMapTextureUnit);
+        GL.ActiveTexture((TextureUnit)previousActiveTexture);
     }
 
     private static Vec3f GetUpwardSunDirection()

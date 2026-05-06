@@ -44,24 +44,24 @@ float getUnderwaterMurkiness() {
 }
 
 float causticFilament(vec2 p, float t) {
-	float n1 = gnoise(vec3(p + vec2(t, -t * 0.74), t * 0.17));
-	float n2 = gnoise(vec3(p * 1.71 + vec2(-t * 0.53, t * 0.91), t * 0.23));
-	float n3 = gnoise(vec3(p * 2.83 + vec2(t * 0.19, t * 0.41), t * 0.11));
+	float n1 = gnoise(vec3(p + vec2(t, -t * 0.72), t * 0.15));
+	float n2 = gnoise(vec3(p * 1.74 + vec2(-t * 0.47, t * 0.84), t * 0.21));
+	float n3 = gnoise(vec3(p * 3.10 + vec2(t * 0.18, t * 0.38), t * 0.10));
 	float ridges = 1.0 - abs(n1 - n2);
 	ridges *= 1.0 - abs(n2 - n3) * 0.72;
-	return smoothstep(0.48, 0.92, pow(clamp(ridges, 0.0, 1.0), 10.0));
+	return smoothstep(0.50, 0.90, pow(clamp(ridges, 0.0, 1.0), 12.0));
 }
 
 float getCausticLight(vec3 worldPos, float murkiness) {
 	if (murkiness <= 0.001) return 0.0;
 	
-	vec2 p = worldPos.xz * 0.32;
-	float t = windWaveCounter * 0.16;
-	float depthFade = smoothstep(0.02, 0.18, murkiness) * (1.0 - smoothstep(0.76, 1.0, murkiness));
+	vec2 p = worldPos.xz * 0.58;
+	float t = windWaveCounter * 0.115;
+	float depthFade = smoothstep(0.035, 0.22, murkiness) * (1.0 - smoothstep(0.78, 1.0, murkiness));
 	float broad = causticFilament(p, t);
-	float fine = causticFilament(p * 2.35 + vec2(11.7, -4.3), t * 1.28);
-	float sparkle = pow(max(0.0, broad * 0.58 + fine * 0.34), 1.9);
-	float daylightBoost = 0.16 + clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.16;
+	float fine = causticFilament(p * 2.15 + vec2(11.7, -4.3), t * 1.18);
+	float sparkle = pow(max(0.0, broad * 0.46 + fine * 0.36), 2.25);
+	float daylightBoost = 0.10 + clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.12;
 	return sparkle * depthFade * daylightBoost;
 }
 

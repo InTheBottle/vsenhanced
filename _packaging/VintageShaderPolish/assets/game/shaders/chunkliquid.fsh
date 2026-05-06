@@ -183,18 +183,35 @@ float dropletnoise(in vec2 x)
 }
 
 vec2 vspWaterRefractWave(vec3 worldPos, float upness) {
-	float t = waterWaveCounter * 0.24 + windWaveCounter * 0.10;
-	float wx = gnoise(vec3(worldPos.x * 0.36 + t, worldPos.z * 0.31 - t * 0.63, t * 0.17));
-	float wy = gnoise(vec3(worldPos.z * 0.34 - t * 0.47, worldPos.x * 0.29 + t * 0.71, t * 0.19));
+	float t = waterWaveCounter * 0.18 + windWaveCounter * 0.075;
+	float wx = gnoise(vec3(worldPos.x * 0.42 + t, worldPos.z * 0.37 - t * 0.63, t * 0.14));
+	float wy = gnoise(vec3(worldPos.z * 0.39 - t * 0.47, worldPos.x * 0.34 + t * 0.71, t * 0.16));
 	vec2 wave = vec2(wx, wy) - vec2(0.5);
-	return wave * upness;
+	return wave * upness * 0.72;
 }
 
 float vspSurfaceCaustic(vec3 worldPos, float waterDepth, float cloudShadow, float shadowBright, float upness) {
 	float lightGate = clamp(realCloudShadowDaylight, 0.0, 1.0) * cloudShadow * shadowBright * upness;
-	float depthGate = smoothstep(0.06, 0.28, waterDepth) * (1.0 - smoothstep(0.70, 1.0, waterDepth));
+	float depthGate = smoothstep(0.08, 0.30, waterDepth) * (1.0 - smoothstep(0.74, 1.0, waterDepth));
 	float caustic = getCausticLight(worldPos - vec3(0.0, waterDepth * 2.5, 0.0), max(waterDepth, 0.035));
 	return caustic * lightGate * depthGate;
+}
+
+float vspSampleSceneDepth(vec2 uv) {
+	return linearDepth(texture(depthTex, clamp(uv, vec2(0.001), vec2(0.999))).x);
+}
+
+float vspStableWaterDepth(vec2 screenUv, vec2 refractWave, float surfaceDepth, float upness, float exposure) {
+	vec2 pixel = 1.0 / frameSize;
+	vec2 refractUv = clamp(screenUv + refractWave * (2.4 + sunSpecularIntensity * 1.15) * pixel, vec2(0.001), vec2(0.999));
+	float depth = vspSampleSceneDepth(refractUv);
+	depth = max(depth, vspSampleSceneDepth(screenUv + pixel * vec2( 1.5,  0.0)));
+	depth = max(depth, vspSampleSceneDepth(screenUv + pixel * vec2(-1.5,  0.0)));
+	depth = max(depth, vspSampleSceneDepth(screenUv + pixel * vec2( 0.0,  1.5)));
+	depth = max(depth, vspSampleSceneDepth(screenUv + pixel * vec2( 0.0, -1.5)));
+	float rawDepth = max(depth - surfaceDepth, 0.0);
+	float stableFloor = upness * exposure * 0.105;
+	return clamp(max(rawDepth * 16.0, stableFloor), 0.0, 1.0);
 }
 
 void main() 
@@ -279,7 +296,8 @@ void main()
 		texColor *= vec4(rgbaFinal.rgb * shadowBright * cloudShadow, rgbaFinal.a);
 		
 		float upness = clamp(dot(fragNormal, vec3(0, 1, 0)), 0, 1);
-		float openSky = float(skyExposed) * upness * (1 - fogAmount);
+		float exposure = mix(0.38, 1.0, float(skyExposed));
+		float openSky = exposure * upness * (1 - fogAmount);
 		float rim = clamp((fresnel - 0.35) * 0.35, 0, 0.25);
 		vec3 skyTint = mix(reflectColor, sunColor, 0.12);
 		float shimmer = max(0.0, gnoise(vec3(fragWorldPos.x * 1.7, fragWorldPos.z * 1.7, waterWaveCounter * 0.35))) * 0.06 * sunSpecularIntensity;
@@ -423,19 +441,20 @@ void main()
 	if (!isLava) {
 		float surfaceDepth = linearDepth(gl_FragCoord.z);
 		float upness = clamp(dot(fragNormal, vec3(0, 1, 0)), 0, 1);
+		float exposure = mix(0.38, 1.0, float(skyExposed));
+		vec2 screenUv = vec2(x, y);
 		vec2 refractWave = vspWaterRefractWave(fragWorldPos.xyz, upness);
-		vec2 refractUv = clamp(vec2(x, y) + refractWave * (3.5 + sunSpecularIntensity * 2.0) / frameSize.xy, vec2(0.0), vec2(1.0));
-		float sceneDepth = linearDepth(texture(depthTex, refractUv).x);
-		float waterDepth = clamp((sceneDepth - surfaceDepth) * 22.0, 0.0, 1.0);
+		float waterDepth = vspStableWaterDepth(screenUv, refractWave, surfaceDepth, upness, exposure) * (1.0 - fogAmount);
 		vec3 depthColor = mix(reflectColor, waterMurkColor.rgb, 0.65);
-		depthColor += vec3(refractWave.x * 0.08, refractWave.y * 0.05, (refractWave.x - refractWave.y) * 0.03) * waterDepth * (0.45 + realCloudShadowDaylight * 0.35);
-		float bottomShadow = waterDepth * (1.0 - cloudShadow * 0.45) * (1.0 - fogAmount);
-		float caustic = vspSurfaceCaustic(fragWorldPos.xyz, waterDepth, cloudShadow, shadowBright, upness) * (1.0 - fogAmount);
-		vec3 causticColor = mix(vec3(0.42, 0.70, 0.86), sunColor, 0.12);
-		texColor.rgb = mix(texColor.rgb, depthColor * (0.37 + 0.36 * shadowBright * cloudShadow), waterDepth * 0.38 * (1 - fogAmount));
-		texColor.rgb += causticColor * caustic * 0.22;
-		texColor.rgb *= 1.0 - bottomShadow * 0.22;
-		texColor.a += waterDepth * (0.10 + length(refractWave) * 0.08) * (1 - texColor.a);
+		depthColor += vec3(refractWave.x * 0.055, refractWave.y * 0.040, (refractWave.x - refractWave.y) * 0.024) * waterDepth * (0.34 + realCloudShadowDaylight * 0.28);
+		float bottomShadow = waterDepth * (1.0 - cloudShadow * 0.45) * exposure;
+		float caustic = vspSurfaceCaustic(fragWorldPos.xyz, waterDepth, cloudShadow, shadowBright, upness) * exposure * (1.0 - fogAmount);
+		vec3 causticColor = mix(vec3(0.38, 0.64, 0.82), sunColor, 0.10);
+		float surfaceBlend = waterDepth * upness * 0.26;
+		texColor.rgb = mix(texColor.rgb, depthColor * (0.44 + 0.28 * shadowBright * cloudShadow), surfaceBlend);
+		texColor.rgb += causticColor * caustic * 0.12;
+		texColor.rgb *= 1.0 - bottomShadow * 0.12;
+		texColor.a += waterDepth * upness * (0.055 + length(refractWave) * 0.045) * (1 - texColor.a);
 	}
 	
 	
