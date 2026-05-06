@@ -38,7 +38,9 @@ public sealed class VintageShaderPolishMod : ModSystem
 internal static class RealCloudShadowState
 {
     private const int CloudMapTextureUnit = 15;
+    private const int ConsecutiveErrorThreshold = 8;
     private static bool disabledAfterError;
+    private static int consecutiveErrors;
     private static bool loggedMissingState;
     private static bool loggedFirstTexture;
     private static bool loggedFirstWidth;
@@ -59,6 +61,7 @@ internal static class RealCloudShadowState
     internal static void Reset()
     {
         disabledAfterError = false;
+        consecutiveErrors = 0;
         loggedMissingState = false;
         loggedFirstTexture = false;
         loggedFirstWidth = false;
@@ -163,6 +166,13 @@ internal static class RealCloudShadowState
             return;
         }
 
+        // World/Calendar is null very briefly during shader reload before level init.
+        // Bail this frame instead of throwing — the bind will succeed next frame.
+        if (api.World == null || api.World.Calendar == null)
+        {
+            return;
+        }
+
         bool wantsCloudSampler = shader.HasUniform("realCloudShadowMap");
         bool wantsCloudMapWidth = shader.HasUniform("realCloudShadowMapWidth");
         bool wantsCloudOffset = shader.HasUniform("realCloudShadowOffset");
@@ -218,13 +228,18 @@ internal static class RealCloudShadowState
                     api.Logger.Notification("Vintage Shader Polish: godray raymarch uniforms bound. invProjection={0}, invModelView={1}, cameraWorldPos={2}.", wantsInvProjection, wantsInvModelView, wantsCameraWorldPos);
                 }
             }
+            // For passes where we deliberately skip the cloud-sampler bind
+            // (e.g. godrays — see ShouldBindCloudMap), force width to 0 so the
+            // shader's volumetric short-circuit triggers and never samples the
+            // unbound `realCloudShadowMap` slot.
+            bool feedCloudState = hasCloudState && shouldBindCloudMap;
             if (wantsCloudMapWidth)
             {
-                shader.Uniform("realCloudShadowMapWidth", hasCloudState ? CloudMapWidth : 0f);
+                shader.Uniform("realCloudShadowMapWidth", feedCloudState ? CloudMapWidth : 0f);
             }
             if (wantsCloudStrength)
             {
-                shader.Uniform("realCloudShadowStrength", hasCloudState ? 1.45f : 0f);
+                shader.Uniform("realCloudShadowStrength", feedCloudState ? 1.45f : 0f);
             }
 
             if (!hasCloudState)
@@ -300,11 +315,21 @@ internal static class RealCloudShadowState
                     CloudMapTextureUnit
                 );
             }
+
+            consecutiveErrors = 0;
         }
         catch (System.Exception ex)
         {
-            disabledAfterError = true;
-            api?.Logger.Error("Vintage Shader Polish: disabled cloud shadow bind after error: {0}", ex);
+            consecutiveErrors++;
+            if (consecutiveErrors >= ConsecutiveErrorThreshold)
+            {
+                disabledAfterError = true;
+                api?.Logger.Error("Vintage Shader Polish: disabled cloud shadow bind after {0} consecutive errors: {1}", consecutiveErrors, ex);
+            }
+            else if (consecutiveErrors == 1)
+            {
+                api?.Logger.Warning("Vintage Shader Polish: transient cloud shadow bind error (will retry): {0}", ex.Message);
+            }
         }
     }
 
@@ -317,7 +342,12 @@ internal static class RealCloudShadowState
             return false;
         }
 
-        return IsTerrainPass(shader.PassName) || shader.PassName == "godrays";
+        // Binding the cloud-shadow sampler to the godrays pass triggers a
+        // GL_INVALID_OPERATION flood (observed in the VS log) that suppresses
+        // the godrays draw entirely. Restrict the bind to terrain passes — the
+        // godrays shader's volumetric path short-circuits when its cloud-map
+        // width uniform stays at zero.
+        return IsTerrainPass(shader.PassName);
     }
 
     private static void BindCloudMap(ShaderProgramBase shader)

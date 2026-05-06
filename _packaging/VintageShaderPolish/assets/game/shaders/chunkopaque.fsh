@@ -152,9 +152,9 @@ float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	if (!(cloud >= 0.0)) cloud = 0.0;
 	cloud = clamp(cloud, 0.0, 1.0);
 	float strength = clamp(cloud * upness * daylight * fogFade, 0.0, 1.0);
-	float shadow = 1.0 - strength * 0.34;
+	float shadow = 1.0 - strength * 0.50;
 	if (!(shadow >= 0.0)) return 1.0;
-	return clamp(shadow, 0.66, 1.0);
+	return clamp(shadow, 0.50, 1.0);
 }
 
 void main() 
@@ -189,7 +189,9 @@ void main()
 	outColor.rgb = applyMoonDirectLight(outColor.rgb, normal, fogAmount);
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(outColor.rgb, vec3(0.299, 0.587, 0.114)));
-	outColor.rgb *= mix(1.0, vspCloudShadow, vspLitGuard);
+	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
+	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
+	outColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);
 
 
 #if NORMALVIEW == 0	
@@ -219,9 +221,9 @@ void main()
 #endif
 
 #if NORMALVIEW > 0
-	outColor = vec4((normal.x + 1) / 2, (normal.y + 1)/2, (normal.z+1)/2, 1);	
+	outColor = vec4((normal.x + 1) / 2, (normal.y + 1)/2, (normal.z+1)/2, 1);
 #endif
-	
+
 	float vspScatter = calculateVspVolumetricScatter(worldPos.xyz, normal, fogAmount);
 	outGlow = vec4(glowLevel + glow, max(godrayLevel, vspScatter), 0, min(1, fogAmount + outColor.a));
 	

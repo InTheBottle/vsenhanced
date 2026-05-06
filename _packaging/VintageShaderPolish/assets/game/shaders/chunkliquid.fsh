@@ -141,9 +141,9 @@ float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	if (!(cloud >= 0.0)) cloud = 0.0;
 	cloud = clamp(cloud, 0.0, 1.0);
 	float strength = clamp(cloud * upness * daylight * fogFade, 0.0, 1.0);
-	float shadow = 1.0 - strength * 0.34;
+	float shadow = 1.0 - strength * 0.50;
 	if (!(shadow >= 0.0)) return 1.0;
-	return clamp(shadow, 0.66, 1.0);
+	return clamp(shadow, 0.50, 1.0);
 }
 
 vec2 droplethash3( vec2 p )
@@ -255,6 +255,8 @@ void main()
 	
 	float shadowBright = getBrightnessFromShadowMap();
 	float cloudShadow = vspGetCloudShadow(fragWorldPos.xyz, fragNormal, fogAmount);
+	if (!(cloudShadow >= 0.0)) cloudShadow = 1.0;
+	cloudShadow = clamp(cloudShadow, 0.5, 1.0);
 	
 	
 	float x = gl_FragCoord.x / frameSize.x;
@@ -443,5 +445,5 @@ void main()
 
 	OIT(texColor, glowLevel);
 	outGlow.y = max(outGlow.y, calculateVspVolumetricScatter(fWorldPos.xyz, fragNormal, fogAmount));
-	
+
 }

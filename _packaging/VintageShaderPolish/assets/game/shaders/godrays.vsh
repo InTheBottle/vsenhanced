@@ -37,12 +37,21 @@ void main(void)
 	float y = -1.0 + float((gl_VertexID & 2) << 1);
 	gl_Position = vec4(x, y, 0, 1);
 	texCoord = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
-	sunPosScreen = sunPosScreenIn;
-	iGlobalTime = iGlobalTimeIn;
-	direction = dot(sunPos3dIn, playerViewVector) >= 0.0 ? 1.0 : -1.0;
 
-	vec3 moonColor = vec3(0.22, 0.34, 0.64) * moonLightStrength * 0.82;
-	float height = pow(clamp(sunPos3dIn.y * 1.55, 0.0, 1.0), 2.35);
+	// When the sun is below the horizon, anchor the rays on the moon instead.
+	// VS doesn't expose a separate moon screen position to this pass, but the
+	// moon is roughly antipodal to the sun on the celestial sphere, so the
+	// negation of sunPos3d/sunPosScreen is a serviceable approximation.
+	bool isNight = sunPos3dIn.y < 0.0;
+	vec3 lightPos3d = isNight ? -sunPos3dIn : sunPos3dIn;
+	vec3 lightPosScreenLocal = isNight ? -sunPosScreenIn : sunPosScreenIn;
+
+	sunPosScreen = lightPosScreenLocal;
+	iGlobalTime = iGlobalTimeIn;
+	direction = dot(lightPos3d, playerViewVector) >= 0.0 ? 1.0 : -1.0;
+
+	vec3 moonColor = vec3(0.32, 0.46, 0.78) * moonLightStrength * 1.30;
+	float height = pow(clamp(lightPos3d.y * 1.55, 0.0, 1.0), 2.35);
 	float actualScale = height * NumDayColors;
 	float cmpH = min(floor(actualScale), NumDayColors - 1.0);
 	float cmpH1 = min(floor(actualScale) + 1.0, NumDayColors - 1.0);

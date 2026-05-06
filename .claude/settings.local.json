@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"VintageShaderPolish|godrays|chunkopaque|Error|Exception|GLSL|shader\" \"C:/Users/ronni/AppData/Roaming/VintagestoryData/Logs/client-main.log\" | tail -50)",
+      "Read(//c/Users/ronni/AppData/Roaming/VintagestoryData/Logs/**)",
+      "Bash(ls -la \"C:/Users/ronni/AppData/Roaming/VintagestoryData/Mods/\" 2>&1 | head -30)",
+      "Read(//c/Users/ronni/AppData/Roaming/VintagestoryData/Mods/**)"
+    ]
+  }
+}

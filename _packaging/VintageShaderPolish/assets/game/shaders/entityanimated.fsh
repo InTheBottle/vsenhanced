@@ -114,10 +114,8 @@ void main() {
 #endif
 
 #if NORMALVIEW > 0
-	outColor = vec4((normal.x + 1) / 2, (normal.y + 1)/2, (normal.z+1)/2, 1);	
+	outColor = vec4((normal.x + 1) / 2, (normal.y + 1)/2, (normal.z+1)/2, 1);
 #endif
-
-	
 
 #if USEOIT > 0
 	OIT(outColor, glowLevel+glow);

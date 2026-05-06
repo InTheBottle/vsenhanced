@@ -24,6 +24,7 @@ flat in vec3 normal;
 #include underwatereffects.fsh
 #include oit.fsh
 
+
 #if SHADOWQUALITY > 0
 uniform mat4 toShadowMapSpaceMatrixFar;
 #endif
@@ -134,9 +135,9 @@ float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	if (!(cloud >= 0.0)) cloud = 0.0;
 	cloud = clamp(cloud, 0.0, 1.0);
 	float strength = clamp(cloud * upness * daylight * fogFade, 0.0, 1.0);
-	float shadow = 1.0 - strength * 0.34;
+	float shadow = 1.0 - strength * 0.50;
 	if (!(shadow >= 0.0)) return 1.0;
-	return clamp(shadow, 0.66, 1.0);
+	return clamp(shadow, 0.50, 1.0);
 }
 
 void main() 
@@ -161,13 +162,15 @@ void main()
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));
 	texColor.rgb = applyMoonDirectLight(texColor.rgb, normal, fogAmount);
-	texColor.rgb *= mix(1.0, vspCloudShadow, vspLitGuard);
+	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
+	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
+	texColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);
 	
 
 #if SHINYEFFECT > 0
 	float glow=0;
 	texColor = mix(applyReflectiveEffect(texColor, glow, renderFlags, uv, normal, worldPos, worldPos, blockLight), texColor, min(1, 2 * fogAmount));
-#endif	
+#endif
 
     OIT(texColor, glowLevel);
 	outGlow.y = max(outGlow.y, calculateVspVolumetricScatter(worldPos.xyz, normal, fogAmount));
