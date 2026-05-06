@@ -232,6 +232,6 @@ void main(){
         OITaccumulate(i, k * (1.0 - OITreveal[i]));
 
     outReveal = vec4(1.0 - k.a);
-    outGlow.g = getVolumetricCloudRaySource(direction, k.a);
+    outGlow.g = 0.0;
     outGlow.a = k.a;
 }

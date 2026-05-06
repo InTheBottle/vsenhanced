@@ -110,7 +110,7 @@ void main()
 
     OIT(col, 0.0, faux);
 
-	float cloudRay = getCloudRaySource(vertexPos, col.a, skyGlow.a, fogAmountf, thinCloudModef);
+	float cloudRay = 0.0;
     outGlow = vec4(max(0, skyGlow.a/10 + baseBloom), cloudRay, 0, min(1, col.a*5 - (flagsf >= 5 ? thinCloudModef : 0)));
 
 }
