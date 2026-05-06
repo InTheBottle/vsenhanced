@@ -43,16 +43,26 @@ float getUnderwaterMurkiness() {
 	return clamp(max(0.0, fdepth - ldepth)*350.0, 0.0, 1.0);
 }
 
+float causticFilament(vec2 p, float t) {
+	float n1 = gnoise(vec3(p + vec2(t, -t * 0.74), t * 0.17));
+	float n2 = gnoise(vec3(p * 1.71 + vec2(-t * 0.53, t * 0.91), t * 0.23));
+	float n3 = gnoise(vec3(p * 2.83 + vec2(t * 0.19, t * 0.41), t * 0.11));
+	float ridges = 1.0 - abs(n1 - n2);
+	ridges *= 1.0 - abs(n2 - n3) * 0.72;
+	return smoothstep(0.34, 0.88, pow(clamp(ridges, 0.0, 1.0), 7.0));
+}
+
 float getCausticLight(vec3 worldPos, float murkiness) {
 	if (murkiness <= 0.001) return 0.0;
 	
-	vec2 p = worldPos.xz * 0.14;
-	float t = windWaveCounter * 0.16;
-	float depthFade = smoothstep(0.01, 0.14, murkiness) * (1.0 - smoothstep(0.78, 1.0, murkiness));
-	float c1 = gnoise(vec3(p.x + t, p.y - t * 0.7, worldPos.y * 0.015));
-	float c2 = gnoise(vec3(p.x * 1.7 - t * 0.5, p.y * 1.4 + t, worldPos.y * 0.02 + t * 0.3));
-	float caustic = smoothstep(0.62, 1.02, c1 + c2 + 0.55);
-	return caustic * depthFade * 0.24;
+	vec2 p = worldPos.xz * 0.115;
+	float t = windWaveCounter * 0.22;
+	float depthFade = smoothstep(0.015, 0.20, murkiness) * (1.0 - smoothstep(0.82, 1.0, murkiness));
+	float broad = causticFilament(p, t);
+	float fine = causticFilament(p * 1.85 + vec2(11.7, -4.3), t * 1.37);
+	float sparkle = pow(max(0.0, broad * 0.72 + fine * 0.42), 1.55);
+	float daylightBoost = 0.42 + clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.30;
+	return sparkle * depthFade * daylightBoost;
 }
 
 vec3 applyUnderwaterEffects(vec3 color, float murkiness) {
@@ -62,7 +72,7 @@ vec3 applyUnderwaterEffects(vec3 color, float murkiness) {
 
 vec3 applyUnderwaterEffectsAt(vec3 color, float murkiness, vec3 worldPos) {
 	vec3 murkColor = waterMurkColor.rgb * 0.4;
-	vec3 causticColor = mix(vec3(0.75, 0.9, 1.0), waterMurkColor.rgb, 0.35);
+	vec3 causticColor = mix(vec3(0.65, 0.90, 1.15), vec3(1.0, 0.92, 0.74), clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.35);
 	float waterShadow = smoothstep(0.18, 0.95, murkiness) * 0.18;
 	vec3 shadedColor = mix(color.rgb, murkColor, murkiness) * (1.0 - waterShadow);
 	return shadedColor + causticColor * getCausticLight(worldPos, murkiness);
@@ -73,10 +83,14 @@ vec4 applyWetSurface(vec4 texColor, vec3 normal, vec3 worldPos, float fogAmount,
 	float wetness = clamp(dropletIntensity * upness * (1.0 - fogAmount) * (1.0 - min(1.0, glowLevel)), 0.0, 1.0);
 	if (wetness <= 0.001) return texColor;
 	
-	float breakup = 0.75 + 0.25 * gnoise(vec3(worldPos.x * 0.22, worldPos.z * 0.22, windWaveCounter * 0.15));
-	float shine = pow(max(0.0, dot(normalize(normal), lightPosition)), 12.0) * shadowIntensity;
-	texColor.rgb *= 1.0 - wetness * breakup * 0.12;
-	texColor.rgb += vec3(shine) * wetness * 0.12;
+	float breakup = 0.68 + 0.32 * gnoise(vec3(worldPos.x * 0.22, worldPos.z * 0.22, windWaveCounter * 0.15));
+	float fine = smoothstep(0.58, 0.92, gnoise(vec3(worldPos.x * 1.9, worldPos.z * 1.9, windWaveCounter * 0.28)));
+	float daylight = clamp(realCloudShadowDaylight, 0.0, 1.0);
+	float shine = pow(max(0.0, dot(normalize(normal), lightPosition)), 14.0) * shadowIntensity * (0.35 + daylight * 0.65);
+	vec3 wetTint = mix(texColor.rgb * vec3(0.70, 0.76, 0.82), waterMurkColor.rgb * 0.38, 0.16);
+	vec3 glint = mix(vec3(0.14, 0.17, 0.19), vec3(0.55, 0.65, 0.75), daylight);
+	texColor.rgb = mix(texColor.rgb, wetTint, wetness * breakup * 0.34);
+	texColor.rgb += glint * wetness * (shine * 0.55 + fine * 0.045);
 	
 	return texColor;
 }

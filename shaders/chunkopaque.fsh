@@ -51,19 +51,11 @@ float vspNoise(vec2 p) {
 }
 
 vec3 vspApplyUnderwaterEffectsAt(vec3 color, float murkiness, vec3 worldPos) {
-	vec3 shaded = applyUnderwaterEffects(color, murkiness);
-	float caustic = smoothstep(0.72, 0.98, vspNoise(worldPos.xz * 0.55 + windWaveCounter * 0.08));
-	return shaded + mix(vec3(0.72, 0.88, 1.0), waterMurkColor.rgb, 0.35) * caustic * murkiness * 0.12;
+	return applyUnderwaterEffectsAt(color, murkiness, worldPos);
 }
 
 vec4 vspApplyWetSurface(vec4 texColor, vec3 normal, vec3 worldPos, float fogAmount, float glowLevel) {
-	float wetness = clamp(dropletIntensity * max(0.0, normal.y) * (1.0 - fogAmount) * (1.0 - min(1.0, glowLevel)), 0.0, 1.0);
-	if (wetness <= 0.001) return texColor;
-	float breakup = 0.75 + 0.25 * vspNoise(worldPos.xz * 0.22 + windWaveCounter * 0.03);
-	float shine = pow(max(0.0, dot(normalize(normal), lightPosition)), 12.0) * shadowIntensity;
-	texColor.rgb *= 1.0 - wetness * breakup * 0.12;
-	texColor.rgb += vec3(shine) * wetness * 0.12;
-	return texColor;
+	return applyWetSurface(texColor, normal, worldPos, fogAmount, glowLevel);
 }
 
 float vspCloudDensity(vec2 mapPos) {
@@ -119,13 +111,15 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 	for (int i = 0; i < 96; i++) {
 		if (cell.x < 0 || cell.y < 0 || cell.x >= int(realCloudShadowMapWidth) || cell.y >= int(realCloudShadowMapWidth)) break;
 		float nextT = min(min(tMax.x, tMax.y), farT);
-		vec4 map = texelFetch(realCloudShadowMap, cell, 0);
-		float core = smoothstep(0.22, 0.68, map.r);
-		if (core > 0.0) {
-			float segment = vspCloudVolume(origin.y + sunDir.y * t, sunDir.y, map.ba, nextT - t);
-			float hit = core * clamp(segment * map.r * 4.0, 0.0, 1.0);
-			shadow += (1.0 - shadow) * hit;
-			if (shadow > 0.98) break;
+		vec4 map = clamp(texelFetch(realCloudShadowMap, cell, 0), vec4(0.0), vec4(1.0));
+		float core = smoothstep(0.28, 0.72, map.r);
+		if (core > 0.001) {
+			vec2 bounds = vec2(min(map.b, map.a), max(map.b, map.a));
+			float segment = vspCloudVolume(origin.y + sunDir.y * t, sunDir.y, bounds, max(nextT - t, 0.0));
+			float hit = core * clamp(segment * map.r * 2.6, 0.0, 1.0);
+			shadow = clamp(shadow + (1.0 - shadow) * hit, 0.0, 0.92);
+			if (!(shadow >= 0.0)) return 0.0;
+			if (shadow > 0.90) break;
 		}
 		if (nextT >= farT) break;
 		if (tMax.x < tMax.y) {
@@ -139,7 +133,8 @@ float vspTraceCloudShadow(vec3 worldPos, vec3 sunDir) {
 		}
 	}
 	
-	return shadow;
+	if (!(shadow >= 0.0)) return 0.0;
+	return clamp(shadow, 0.0, 1.0);
 }
 
 float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
@@ -154,8 +149,12 @@ float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 		vec2 p = worldPos.xz * 0.0028 + vec2(windWaveCounter * 0.004, -windWaveCounter * 0.002);
 		cloud = smoothstep(0.42, 0.72, vspNoise(floor(p * 24.0) / 24.0));
 	}
-	float strength = cloud * upness * daylight * fogFade;
-	return clamp(1.0 - strength * 0.34, 0.62, 1.0);
+	if (!(cloud >= 0.0)) cloud = 0.0;
+	cloud = clamp(cloud, 0.0, 1.0);
+	float strength = clamp(cloud * upness * daylight * fogFade, 0.0, 1.0);
+	float shadow = 1.0 - strength * 0.20;
+	if (!(shadow >= 0.0)) return 1.0;
+	return clamp(shadow, 0.78, 1.0);
 }
 
 void main() 
@@ -187,7 +186,9 @@ void main()
 	}
 
 	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
-	outColor.rgb *= vspGetCloudShadow(vspWorldPos, normal, fogAmount);
+	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
+	float vspLitGuard = smoothstep(0.035, 0.18, dot(outColor.rgb, vec3(0.299, 0.587, 0.114)));
+	outColor.rgb *= mix(1.0, vspCloudShadow, vspLitGuard);
 
 
 #if NORMALVIEW == 0	

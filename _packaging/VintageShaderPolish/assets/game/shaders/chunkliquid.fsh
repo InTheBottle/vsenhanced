@@ -175,6 +175,21 @@ float dropletnoise(in vec2 x)
     return va;
 }
 
+vec2 vspWaterRefractWave(vec3 worldPos, float upness) {
+	float t = waterWaveCounter * 0.24 + windWaveCounter * 0.10;
+	float wx = gnoise(vec3(worldPos.x * 0.36 + t, worldPos.z * 0.31 - t * 0.63, t * 0.17));
+	float wy = gnoise(vec3(worldPos.z * 0.34 - t * 0.47, worldPos.x * 0.29 + t * 0.71, t * 0.19));
+	vec2 wave = vec2(wx, wy) - vec2(0.5);
+	return wave * upness;
+}
+
+float vspSurfaceCaustic(vec3 worldPos, float waterDepth, float cloudShadow, float shadowBright, float upness) {
+	float lightGate = clamp(realCloudShadowDaylight, 0.0, 1.0) * cloudShadow * shadowBright * upness;
+	float depthGate = smoothstep(0.04, 0.32, waterDepth) * (1.0 - smoothstep(0.86, 1.0, waterDepth));
+	float caustic = getCausticLight(worldPos - vec3(0.0, waterDepth * 4.5, 0.0), max(waterDepth, 0.035));
+	return caustic * lightGate * depthGate;
+}
+
 void main() 
 {
 	// When looking through tinted glass you can clearly see the edges where we fade to sky color
@@ -261,7 +276,8 @@ void main()
 		float rim = clamp((fresnel - 0.35) * 0.35, 0, 0.25);
 		vec3 skyTint = mix(reflectColor, sunColor, 0.12);
 		float shimmer = max(0.0, gnoise(vec3(fragWorldPos.x * 1.7, fragWorldPos.z * 1.7, waterWaveCounter * 0.35))) * 0.06 * sunSpecularIntensity;
-		texColor.rgb += skyTint * openSky * cloudShadow * (0.05 + rim + shimmer);
+		float surfaceFocus = getCausticLight(fragWorldPos.xyz, 0.18) * 0.09 * sunSpecularIntensity;
+		texColor.rgb += skyTint * openSky * cloudShadow * (0.05 + rim + shimmer + surfaceFocus);
 	}
 	
 	if (flowSpeed > 0) {
@@ -399,13 +415,20 @@ void main()
     
 	if (!isLava) {
 		float surfaceDepth = linearDepth(gl_FragCoord.z);
-		float sceneDepth = linearDepth(texture(depthTex, vec2(x, y)).x);
+		float upness = clamp(dot(fragNormal, vec3(0, 1, 0)), 0, 1);
+		vec2 refractWave = vspWaterRefractWave(fragWorldPos.xyz, upness);
+		vec2 refractUv = clamp(vec2(x, y) + refractWave * (3.5 + sunSpecularIntensity * 2.0) / frameSize.xy, vec2(0.0), vec2(1.0));
+		float sceneDepth = linearDepth(texture(depthTex, refractUv).x);
 		float waterDepth = clamp((sceneDepth - surfaceDepth) * 22.0, 0.0, 1.0);
 		vec3 depthColor = mix(reflectColor, waterMurkColor.rgb, 0.65);
+		depthColor += vec3(refractWave.x * 0.08, refractWave.y * 0.05, (refractWave.x - refractWave.y) * 0.03) * waterDepth * (0.45 + realCloudShadowDaylight * 0.35);
 		float bottomShadow = waterDepth * (1.0 - cloudShadow * 0.45) * (1.0 - fogAmount);
-		texColor.rgb = mix(texColor.rgb, depthColor * (0.35 + 0.35 * shadowBright * cloudShadow), waterDepth * 0.34 * (1 - fogAmount));
+		float caustic = vspSurfaceCaustic(fragWorldPos.xyz, waterDepth, cloudShadow, shadowBright, upness) * (1.0 - fogAmount);
+		vec3 causticColor = mix(vec3(0.58, 0.86, 1.12), sunColor, 0.28);
+		texColor.rgb = mix(texColor.rgb, depthColor * (0.37 + 0.36 * shadowBright * cloudShadow), waterDepth * 0.38 * (1 - fogAmount));
+		texColor.rgb += causticColor * caustic * 0.85;
 		texColor.rgb *= 1.0 - bottomShadow * 0.22;
-		texColor.a += waterDepth * 0.12 * (1 - texColor.a);
+		texColor.a += waterDepth * (0.10 + length(refractWave) * 0.08) * (1 - texColor.a);
 	}
 	
 	

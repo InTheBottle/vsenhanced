@@ -33,19 +33,11 @@ float vspNoise(vec2 p) {
 }
 
 vec3 vspApplyUnderwaterEffectsAt(vec3 color, float murkiness, vec3 worldPos) {
-	vec3 shaded = applyUnderwaterEffects(color, murkiness);
-	float caustic = smoothstep(0.72, 0.98, vspNoise(worldPos.xz * 0.55 + windWaveCounter * 0.08));
-	return shaded + mix(vec3(0.72, 0.88, 1.0), waterMurkColor.rgb, 0.35) * caustic * murkiness * 0.12;
+	return applyUnderwaterEffectsAt(color, murkiness, worldPos);
 }
 
 vec4 vspApplyWetSurface(vec4 texColor, vec3 normal, vec3 worldPos, float fogAmount, float glowLevel) {
-	float wetness = clamp(dropletIntensity * max(0.0, normal.y) * (1.0 - fogAmount) * (1.0 - min(1.0, glowLevel)), 0.0, 1.0);
-	if (wetness <= 0.001) return texColor;
-	float breakup = 0.75 + 0.25 * vspNoise(worldPos.xz * 0.22 + windWaveCounter * 0.03);
-	float shine = pow(max(0.0, dot(normalize(normal), lightPosition)), 12.0) * shadowIntensity;
-	texColor.rgb *= 1.0 - wetness * breakup * 0.12;
-	texColor.rgb += vec3(shine) * wetness * 0.12;
-	return texColor;
+	return applyWetSurface(texColor, normal, worldPos, fogAmount, glowLevel);
 }
 
 float vspCloudDensity(vec2 mapPos) {

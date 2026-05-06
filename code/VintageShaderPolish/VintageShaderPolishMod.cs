@@ -1,7 +1,9 @@
 using HarmonyLib;
+using System;
 using System.Reflection;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.Client.NoObf;
 
@@ -40,6 +42,9 @@ internal static class RealCloudShadowState
     private static bool loggedFirstOffset;
     private static bool loggedFirstBind;
     private static bool loggedFirstRendererCapture;
+    private static bool loggedFirstWetness;
+    private static float smoothedDropletIntensity;
+    private static long lastWetnessUpdateMs;
     private static ICoreClientAPI? api;
     private static readonly FieldInfo? CloudRendererTextureMapField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "TextureMap");
     private static readonly FieldInfo? CloudRendererOffsetField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "offset");
@@ -142,13 +147,19 @@ internal static class RealCloudShadowState
 
         bool wantsCloudMap = shader.HasUniform("realCloudShadowMap");
         bool wantsLightDirection = shader.HasUniform("realCloudShadowLightDir");
-        if (!wantsCloudMap && !wantsLightDirection)
+        bool wantsWetness = shader.HasUniform("dropletIntensity");
+        if (!wantsCloudMap && !wantsLightDirection && !wantsWetness)
         {
             return;
         }
 
         try
         {
+            if (wantsWetness)
+            {
+                shader.Uniform("dropletIntensity", GetDropletIntensity());
+            }
+
             Vec3f sun = GetUpwardSunDirection();
             if (wantsLightDirection)
             {
@@ -230,6 +241,54 @@ internal static class RealCloudShadowState
     {
         Vec3f sun = api!.World.Calendar.SunPositionNormalized;
         return sun.Y < 0 ? new Vec3f(-sun.X, -sun.Y, -sun.Z) : sun;
+    }
+
+    private static float GetDropletIntensity()
+    {
+        if (api?.World.Player?.Entity?.Pos == null)
+        {
+            return 0f;
+        }
+
+        float target = 0f;
+        try
+        {
+            ClimateCondition? climate = api.World.BlockAccessor.GetClimateAt(
+                api.World.Player.Entity.Pos.AsBlockPos,
+                EnumGetClimateMode.NowValues,
+                api.World.Calendar.TotalDays
+            );
+            float precipitation = Math.Clamp((climate?.Rainfall ?? 0f) - 0.08f, 0f, 1f) / 0.62f;
+            float distance = GlobalConstants.CurrentDistanceToRainfallClient;
+            float exposure = distance <= 0f ? 1f : Math.Clamp(1f - distance / 12f, 0f, 1f);
+            target = MathF.Pow(Math.Clamp(precipitation * exposure, 0f, 1f), 0.65f) * 1.45f;
+        }
+        catch
+        {
+            target = 0f;
+        }
+
+        long now = api.ElapsedMilliseconds;
+        if (lastWetnessUpdateMs == 0)
+        {
+            lastWetnessUpdateMs = now;
+            smoothedDropletIntensity = target;
+        }
+        else
+        {
+            float dt = Math.Clamp((now - lastWetnessUpdateMs) / 1000f, 0f, 0.25f);
+            lastWetnessUpdateMs = now;
+            float response = target > smoothedDropletIntensity ? 4.0f : 0.45f;
+            smoothedDropletIntensity += (target - smoothedDropletIntensity) * Math.Clamp(dt * response, 0f, 1f);
+        }
+
+        if (!loggedFirstWetness && smoothedDropletIntensity > 0.01f)
+        {
+            loggedFirstWetness = true;
+            api.Logger.Notification("Vintage Shader Polish: weather wetness active, dropletIntensity={0:0.00}.", smoothedDropletIntensity);
+        }
+
+        return smoothedDropletIntensity;
     }
 }
 
