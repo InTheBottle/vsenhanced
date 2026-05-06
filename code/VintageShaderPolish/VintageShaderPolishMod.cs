@@ -45,9 +45,7 @@ internal static class RealCloudShadowState
     private static bool loggedFirstOffset;
     private static bool loggedFirstBind;
     private static bool loggedFirstRendererCapture;
-    private static bool loggedFirstWetness;
-    private static float smoothedDropletIntensity;
-    private static long lastWetnessUpdateMs;
+    private static bool loggedFirstGodrayRaymarch;
     private static readonly HashSet<string> loggedBindPasses = new();
     private static ICoreClientAPI? api;
     private static readonly FieldInfo? CloudRendererTextureMapField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "TextureMap");
@@ -67,9 +65,7 @@ internal static class RealCloudShadowState
         loggedFirstOffset = false;
         loggedFirstBind = false;
         loggedFirstRendererCapture = false;
-        loggedFirstWetness = false;
-        smoothedDropletIntensity = 0f;
-        lastWetnessUpdateMs = 0;
+        loggedFirstGodrayRaymarch = false;
         CloudMapTextureId = 0;
         CloudMapWidth = 0f;
         CloudOffset = null;
@@ -174,30 +170,32 @@ internal static class RealCloudShadowState
         bool wantsLightDirection = shader.HasUniform("realCloudShadowLightDir");
         bool wantsDaylight = shader.HasUniform("realCloudShadowDaylight");
         bool wantsMoonlight = shader.HasUniform("realMoonLightStrength");
-        bool wantsWetness = shader.HasUniform("dropletIntensity");
-        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight;
-        if (!wantsCloudState && !wantsWetness)
+        bool wantsInvProjection = shader.HasUniform("invProjectionMatrix");
+        bool wantsInvModelView = shader.HasUniform("invModelViewMatrix");
+        bool wantsCameraWorldPos = shader.HasUniform("realCameraWorldPos");
+        bool wantsCameraWorldPosition = shader.HasUniform("cameraWorldPosition");
+        bool wantsSunLight = shader.HasUniform("sunLightStrength");
+        bool wantsDayLight = shader.HasUniform("dayLightStrength");
+        bool wantsShadowIntensity = shader.HasUniform("shadowIntensity");
+        bool wantsFlatFog = shader.HasUniform("flatFogDensity");
+        bool wantsPlayerWaterDepth = shader.HasUniform("playerWaterDepth");
+        bool wantsFogColor = shader.HasUniform("fogColor");
+        bool wantsRayState = wantsInvProjection || wantsInvModelView || wantsCameraWorldPos;
+        bool wantsVolumetricState = wantsCameraWorldPosition || wantsSunLight || wantsDayLight || wantsShadowIntensity || wantsFlatFog || wantsPlayerWaterDepth || wantsFogColor;
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState;
+        if (!wantsCloudState)
         {
             return;
         }
 
         try
         {
-            if (wantsWetness)
-            {
-                shader.Uniform("dropletIntensity", GetDropletIntensity());
-            }
-
-            if (!wantsCloudState)
-            {
-                return;
-            }
-
             Vec3f sun = GetUpwardSunDirection();
             float daylight = GetCelestialLightStrength();
             float moonlight = GetMoonLightStrength();
             bool shouldBindCloudMap = ShouldBindCloudMap(shader, wantsCloudSampler);
             bool hasCloudState = CloudMapTextureId > 0 && CloudMapWidth > 1f && CloudOffset is { };
+            ApplyVolumetricUniforms(shader, wantsCameraWorldPosition, wantsSunLight, wantsDayLight, wantsShadowIntensity, wantsFlatFog, wantsPlayerWaterDepth, wantsFogColor);
 
             if (wantsLightDirection)
             {
@@ -210,6 +208,15 @@ internal static class RealCloudShadowState
             if (wantsMoonlight)
             {
                 shader.Uniform("realMoonLightStrength", moonlight);
+            }
+            if (wantsRayState)
+            {
+                ApplyRaymarchUniforms(shader, wantsInvProjection, wantsInvModelView, wantsCameraWorldPos);
+                if (!loggedFirstGodrayRaymarch && shader.PassName == "godrays")
+                {
+                    loggedFirstGodrayRaymarch = true;
+                    api.Logger.Notification("Vintage Shader Polish: godray raymarch uniforms bound. invProjection={0}, invModelView={1}, cameraWorldPos={2}.", wantsInvProjection, wantsInvModelView, wantsCameraWorldPos);
+                }
             }
             if (wantsCloudMapWidth)
             {
@@ -320,6 +327,79 @@ internal static class RealCloudShadowState
         GL.ActiveTexture((TextureUnit)previousActiveTexture);
     }
 
+    private static void ApplyRaymarchUniforms(ShaderProgramBase shader, bool wantsInvProjection, bool wantsInvModelView, bool wantsCameraWorldPos)
+    {
+        if (wantsInvProjection)
+        {
+            shader.UniformMatrix("invProjectionMatrix", ToFloatMatrix(Mat4f.Invert(Mat4f.Create(), api!.Render.CurrentProjectionMatrix)));
+        }
+
+        if (wantsInvModelView)
+        {
+            shader.UniformMatrix("invModelViewMatrix", ToFloatMatrix(Mat4f.Invert(Mat4f.Create(), api!.Render.CameraMatrixOriginf)));
+        }
+
+        if (wantsCameraWorldPos && api!.World.Player?.Entity?.CameraPos != null)
+        {
+            Vec3d cameraPos = api.World.Player.Entity.CameraPos;
+            shader.Uniform("realCameraWorldPos", (float)cameraPos.X, (float)cameraPos.Y, (float)cameraPos.Z);
+        }
+    }
+
+    private static void ApplyVolumetricUniforms(ShaderProgramBase shader, bool wantsCameraWorldPosition, bool wantsSunLight, bool wantsDayLight, bool wantsShadowIntensity, bool wantsFlatFog, bool wantsPlayerWaterDepth, bool wantsFogColor)
+    {
+        if (wantsCameraWorldPosition)
+        {
+            float[] invModelView = Mat4f.Invert(Mat4f.Create(), api!.Render.CameraMatrixOriginf);
+            Vec4f origin = new(0f, 0f, 0f, 1f);
+            Vec4f cameraWorld = new();
+            Mat4f.MulWithVec4(invModelView, origin, cameraWorld);
+            shader.Uniform("cameraWorldPosition", cameraWorld);
+        }
+
+        if (wantsSunLight)
+        {
+            shader.Uniform("sunLightStrength", api!.World.Calendar.SunLightStrength);
+        }
+        if (wantsDayLight)
+        {
+            shader.Uniform("dayLightStrength", api!.World.Calendar.DayLightStrength);
+        }
+        if (wantsShadowIntensity)
+        {
+            shader.Uniform("shadowIntensity", GetDropShadowIntensity());
+        }
+        if (wantsFlatFog)
+        {
+            shader.Uniform("flatFogDensity", api!.Ambient.BlendedFlatFogDensity);
+        }
+        if (wantsPlayerWaterDepth)
+        {
+            shader.Uniform("playerWaterDepth", 0f);
+        }
+        if (wantsFogColor)
+        {
+            shader.Uniform("fogColor", api!.Ambient.BlendedFogColor);
+        }
+    }
+
+    private static float[] ToFloatMatrix(float[] matrix)
+    {
+        float[] result = new float[matrix.Length];
+        for (int i = 0; i < matrix.Length; i++)
+        {
+            result[i] = (float)matrix[i];
+        }
+
+        return result;
+    }
+
+    private static float GetDropShadowIntensity()
+    {
+        FieldInfo? field = typeof(AmbientManager).GetField("DropShadowIntensity", BindingFlags.Instance | BindingFlags.NonPublic);
+        return field?.GetValue(api!.Ambient) is float value ? value : 1f;
+    }
+
     private static Vec3f GetUpwardSunDirection()
     {
         Vec3f sun = api!.World.Calendar.SunPositionNormalized;
@@ -353,53 +433,6 @@ internal static class RealCloudShadowState
 
     private static float SmoothStep(float value) => value * value * (3f - 2f * value);
 
-    private static float GetDropletIntensity()
-    {
-        if (api?.World.Player?.Entity?.Pos == null)
-        {
-            return 0f;
-        }
-
-        float target = 0f;
-        try
-        {
-            ClimateCondition? climate = api.World.BlockAccessor.GetClimateAt(
-                api.World.Player.Entity.Pos.AsBlockPos,
-                EnumGetClimateMode.NowValues,
-                api.World.Calendar.TotalDays
-            );
-            float precipitation = Math.Clamp((climate?.Rainfall ?? 0f) - 0.08f, 0f, 1f) / 0.62f;
-            float distance = GlobalConstants.CurrentDistanceToRainfallClient;
-            float exposure = distance <= 0f ? 1f : Math.Clamp(1f - distance / 12f, 0f, 1f);
-            target = MathF.Pow(Math.Clamp(precipitation * exposure, 0f, 1f), 0.65f) * 1.45f;
-        }
-        catch
-        {
-            target = 0f;
-        }
-
-        long now = api.ElapsedMilliseconds;
-        if (lastWetnessUpdateMs == 0)
-        {
-            lastWetnessUpdateMs = now;
-            smoothedDropletIntensity = target;
-        }
-        else
-        {
-            float dt = Math.Clamp((now - lastWetnessUpdateMs) / 1000f, 0f, 0.25f);
-            lastWetnessUpdateMs = now;
-            float response = target > smoothedDropletIntensity ? 4.0f : 0.45f;
-            smoothedDropletIntensity += (target - smoothedDropletIntensity) * Math.Clamp(dt * response, 0f, 1f);
-        }
-
-        if (!loggedFirstWetness && smoothedDropletIntensity > 0.01f)
-        {
-            loggedFirstWetness = true;
-            api.Logger.Notification("Vintage Shader Polish: weather wetness active, dropletIntensity={0:0.00}.", smoothedDropletIntensity);
-        }
-
-        return smoothedDropletIntensity;
-    }
 }
 
 [HarmonyPatch(typeof(ShaderProgramCloudvolumetric), "set_CloudMap2D")]

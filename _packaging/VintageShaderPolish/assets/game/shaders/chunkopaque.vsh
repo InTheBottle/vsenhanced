@@ -81,6 +81,9 @@ void main(void)
 	gl_Position = projectionMatrix * camPos;
 	
 	calcShadowMapCoords(modelViewMatrix, worldPos);
+#if GODRAYS > 0
+	prepareVolumetricLighting(lightPosition, rgbaLightIn);
+#endif
  #if USESSBO > 0
 	calcColorMapUvs(vdata.colormapData, truePos + vec4(playerpos, 1.0), rgbaLightIn.a, isLeaves);
 	uv = UnpackUv(vdata, vIndex, subpixelPaddingX, subpixelPaddingY);

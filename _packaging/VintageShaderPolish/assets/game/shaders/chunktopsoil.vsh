@@ -25,6 +25,7 @@ uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
 uniform float subpixelPaddingX;
 uniform float subpixelPaddingY;
+uniform vec3 lightPosition;
 
 
 out vec4 rgba;
@@ -81,6 +82,9 @@ void main(void)
 	gl_Position = projectionMatrix * cameraPos;
 	
 	calcShadowMapCoords(modelViewMatrix, worldPos);
+#if GODRAYS > 0
+	prepareVolumetricLighting(lightPosition, rgbaLightIn);
+#endif
 	
  #if USESSBO > 0
 	calcColorMapUvs(vdata.colormapData, truePos + vec4(playerpos, 1), rgbaLightIn.a, false);

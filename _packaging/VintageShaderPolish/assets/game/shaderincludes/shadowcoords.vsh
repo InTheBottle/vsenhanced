@@ -2,6 +2,12 @@
 uniform float shadowRangeFar;
 uniform mat4 toShadowMapSpaceMatrixFar;
 out vec4 shadowCoordsFar;
+#if GODRAYS > 0
+uniform vec4 cameraWorldPosition;
+out vec4 shadowRayStart;
+out vec4 shadowLightPos;
+out float sunlightLevel;
+#endif
 #endif
 #if SHADOWQUALITY > 1
 uniform float shadowRangeNear;
@@ -52,5 +58,21 @@ void calcShadowMapCoords(mat4 modelviewMat, vec4 worldPos) {
 	if (shadowCoordsFar.z >= 0.999) shadowCoordsFar.w = 0.0;     // so no need to test both in fogandlight.fsh
 
 
+#endif
+}
+
+void prepareVolumetricLightingFlat(vec3 lightPosition) {
+#if SHADOWQUALITY > 0 && GODRAYS > 0
+	shadowRayStart = toShadowMapSpaceMatrixFar * cameraWorldPosition;
+	shadowLightPos = toShadowMapSpaceMatrixFar * vec4(lightPosition, 0.0);
+	sunlightLevel = 1.0;
+#endif
+}
+
+void prepareVolumetricLighting(vec3 lightPosition, vec4 lightColor) {
+#if SHADOWQUALITY > 0 && GODRAYS > 0
+	shadowRayStart = toShadowMapSpaceMatrixFar * cameraWorldPosition;
+	shadowLightPos = toShadowMapSpaceMatrixFar * vec4(lightPosition, 0.0);
+	sunlightLevel = lightColor.a;
 #endif
 }

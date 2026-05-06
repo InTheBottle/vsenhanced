@@ -7,32 +7,66 @@ uniform vec3 playerViewVector;
 uniform float iGlobalTimeIn;
 uniform float directionIn;
 uniform int dusk;
+uniform float moonLightStrength;
+uniform float sunLightStrength;
+uniform float dayLightStrength;
+uniform float shadowIntensity;
+uniform float flatFogDensity;
+uniform float playerWaterDepth;
+uniform vec4 fogColor;
 
 out vec2 texCoord;
 out vec3 sunPosScreen;
 out float iGlobalTime;
-out float intensity;
 out float direction;
+out vec3 frontColor;
+out vec3 backColor;
+
+const float NumDayColors = 5.0;
+const vec3 DayColors[5] = vec3[5](
+	vec3(1.0, 0.24, 0.05),
+	vec3(1.0, 0.58, 0.22),
+	vec3(0.92, 0.84, 0.70),
+	vec3(0.68, 0.82, 1.0),
+	vec3(0.46, 0.64, 1.0)
+);
 
 void main(void)
 {
-	// https://randallr.wordpress.com/2014/06/14/rendering-a-screen-covering-triangle-in-opengl
 	float x = -1.0 + float((gl_VertexID & 1) << 2);
-    float y = -1.0 + float((gl_VertexID & 2) << 1);
-    gl_Position = vec4(x, y, 0, 1);
-    texCoord = vec2((x+1.0) * 0.5, (y + 1.0) * 0.5);
-	
+	float y = -1.0 + float((gl_VertexID & 2) << 1);
+	gl_Position = vec4(x, y, 0, 1);
+	texCoord = vec2((x + 1.0) * 0.5, (y + 1.0) * 0.5);
 	sunPosScreen = sunPosScreenIn;
 	iGlobalTime = iGlobalTimeIn;
-	
-	direction = directionIn;
-	
-	// https://www.toolfk.com/online-plotter-frame/#W3sidHlwZSI6MCwiZXEiOiJtYXgoMSwxLjc1KigxLTYqYWJzKHgtMC4yMikpKSIsImNvbG9yIjoiIzAwMDAwMCJ9LHsidHlwZSI6MTAwMCwid2luZG93IjpbIi0xIiwiMSIsIjAiLCIyIl19XQ--
-	float dawnMul = max(1.0, (1.0 - dusk) * 2.0 * (1.0 - 6.0 * abs(sunPos3dIn.y - 0.1)));
-	float daylightFade = smoothstep(-0.04, 0.16, sunPos3dIn.y) * (1.0 - smoothstep(0.92, 1.0, sunPos3dIn.y));
-	float moonDisc = 1.0 - smoothstep(-0.85, -0.05, directionIn);
-	float moonHeight = clamp(-sunPos3dIn.y, 0.0, 1.0);
-	float moonFade = moonDisc * smoothstep(0.03, 0.28, moonHeight) * (1.0 - smoothstep(0.86, 1.0, moonHeight));
-	
-	intensity = clamp(max(0.42 * dawnMul * daylightFade, 0.18 * moonFade), 0.0, 0.58);
+	direction = dot(sunPos3dIn, playerViewVector) >= 0.0 ? 1.0 : -1.0;
+
+	vec3 moonColor = vec3(0.22, 0.34, 0.64) * moonLightStrength * 0.82;
+	float height = pow(clamp(sunPos3dIn.y * 1.55, 0.0, 1.0), 2.35);
+	float actualScale = height * NumDayColors;
+	float cmpH = min(floor(actualScale), NumDayColors - 1.0);
+	float cmpH1 = min(floor(actualScale) + 1.0, NumDayColors - 1.0);
+	vec3 sunlight = mix(DayColors[int(cmpH)], DayColors[int(cmpH1)], fract(actualScale));
+	float rayIntensity = clamp(pow(max(shadowIntensity, 0.18), 1.65), 0.10, 1.0) * 1.25;
+	vec3 sunColor = sunlight * rayIntensity * max(sunLightStrength, dayLightStrength * 0.35);
+	vec3 sunBackColor = mix(vec3(0.95, 0.12, 0.20), vec3(0.42, 0.62, 1.0), clamp(height * 5.0, 0.0, 1.0)) * rayIntensity;
+
+	vec3 outFront = moonColor;
+	vec3 outBack = moonColor * 0.72;
+	if (sunLightStrength > 0.15) {
+		outFront = sunColor;
+		outBack = sunBackColor;
+	} else if (sunLightStrength > 0.05) {
+		float mixStrength = (sunLightStrength - 0.05) / 0.10;
+		outFront = mix(moonColor, sunColor, mixStrength);
+		outBack = mix(moonColor * 0.72, sunBackColor, mixStrength);
+	}
+
+	float depthMult = clamp(playerWaterDepth * 5.0, 0.0, 1.0);
+	outFront = mix(outFront, fogColor.xyz, depthMult);
+	outBack = mix(outBack, fogColor.xyz, depthMult);
+
+	float fogDensity = clamp((0.032 - flatFogDensity) * 45.0, 0.0, 1.0);
+	frontColor = outFront * fogDensity;
+	backColor = outBack * fogDensity;
 }

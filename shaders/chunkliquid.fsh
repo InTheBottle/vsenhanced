@@ -12,6 +12,7 @@ uniform vec3 reflectColor;
 uniform float waterWaveCounter;
 uniform float sunSpecularIntensity;
 uniform float windSpeed;
+uniform float dropletIntensity = 0.0;
 
 in vec4 rgba;
 in vec4 rgbaFog;
@@ -155,31 +156,7 @@ vec2 droplethash3( vec2 p )
 
 float dropletnoise(in vec2 x)
 {
-    if (dropletIntensity < 0.001) return 0.;
-	
-    x *= dropletIntensity;
-    
-    vec2 p = floor(x);
-    vec2 f = fract(x);
-
-
-    float va = 0.0;
-    for( int j=-1; j<=1; j++ )
-    for( int i=-1; i<=1; i++ )
-    {
-        vec2 g = vec2(float(i), float(j));
-        vec2 o = droplethash3(p + g);
-        vec2 r = g - f + o;
-        float d = length(r) / dropletIntensity;
-        
-        float a = max(cos(d - waterWaveCounter * 2.7 + (o.x + o.y) * 5.0), 0.);
-        a = smoothstep(0.99, 0.999, a);
-        
-        float ripple = mix(a, 0., d);
-        va += max(ripple, 0.);
-    }
-	
-    return va;
+    return 0.0;
 }
 
 vec2 vspWaterRefractWave(vec3 worldPos, float upness) {

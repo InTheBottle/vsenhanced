@@ -160,21 +160,17 @@ vec4 traverse(vec3 o, vec3 d, float far, float T){
 }
 
 float getVolumetricCloudRaySource(vec3 viewDir, float alpha) {
-	if (realCloudShadowMapWidth <= 1.0) {
-		return 0.0;
-	}
-
 	vec3 lightDir = normalize(realCloudShadowLightDir);
 	float facing = max(0.0, dot(viewDir, lightDir));
 	float edge = smoothstep(0.010, 0.26, alpha) * (1.0 - smoothstep(0.64, 0.98, alpha));
 	float body = smoothstep(0.04, 0.44, alpha) * (1.0 - smoothstep(0.80, 1.0, alpha));
 	float veil = smoothstep(0.02, 0.34, alpha) * (1.0 - smoothstep(0.92, 1.0, alpha));
 	float elevation = smoothstep(0.018, 0.16, lightDir.y);
-	float celestial = clamp(realCloudShadowDaylight, 0.0, 1.0);
-	float moonBoost = 1.0 + clamp(realMoonLightStrength, 0.0, 1.0) * 0.28;
-	float narrowBeam = pow(facing, 3.15) * (edge * 1.05 + body * 0.34 + veil * 0.22);
-	float broadShaft = smoothstep(0.20, 0.78, facing) * (edge * 0.36 + veil * 0.28);
-	return clamp((narrowBeam + broadShaft) * elevation * celestial * moonBoost, 0.0, 1.18);
+	float moon = clamp(realMoonLightStrength, 0.0, 1.0);
+	float celestial = clamp(realCloudShadowDaylight + moon * 0.72, 0.0, 1.0);
+	float narrowBeam = pow(facing, 2.35) * (edge * 0.92 + body * 0.30 + veil * 0.18);
+	float broadShaft = smoothstep(0.02, 0.58, facing) * (edge * 0.46 + veil * 0.38 + body * 0.14);
+	return clamp((narrowBeam + broadShaft) * elevation * celestial, 0.0, 0.92);
 }
 
 void main(){

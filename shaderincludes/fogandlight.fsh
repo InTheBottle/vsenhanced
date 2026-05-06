@@ -13,6 +13,11 @@ in vec4 shadowCoordsFar;
 uniform sampler2DShadow shadowMapFar;
 uniform float shadowMapWidthInv;
 uniform float shadowMapHeightInv;
+#if GODRAYS > 0
+in vec4 shadowRayStart;
+in vec4 shadowLightPos;
+in float sunlightLevel;
+#endif
 #endif
 
 #if SHADOWQUALITY > 1

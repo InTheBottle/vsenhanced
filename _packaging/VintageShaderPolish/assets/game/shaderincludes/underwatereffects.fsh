@@ -2,7 +2,6 @@ uniform sampler2D liquidDepth;
 uniform float cameraUnderwater;
 uniform vec2 frameSize;
 uniform vec4 waterMurkColor;
-uniform float dropletIntensity = 0.0;
 uniform sampler2D realCloudShadowMap;
 uniform float realCloudShadowMapWidth;
 uniform vec3 realCloudShadowOffset;
@@ -98,23 +97,55 @@ float vspVolumetricPhase(float cosTheta) {
 }
 
 float calculateVspVolumetricScatter(vec3 viewPos, vec3 normal, float fogAmount) {
+#if GODRAYS > 0 && SHADOWQUALITY > 0
+	if (sunlightLevel < 0.002 || fogAmount > 0.96) {
+		return 0.0;
+	}
+	if (shadowRayStart.w <= 0.0001 || shadowCoordsFar.w <= 0.0001 || shadowCoordsFar.z >= 0.999 ||
+		shadowCoordsFar.x <= 0.02 || shadowCoordsFar.x >= 0.98 ||
+		shadowCoordsFar.y <= 0.02 || shadowCoordsFar.y >= 0.98) {
+		return 0.0;
+	}
+
+	const int maxSamples = 5;
+	vec3 dV = (shadowCoordsFar.xyz - shadowRayStart.xyz) / float(maxSamples);
+	float rayStepLength = length(dV);
+	if (rayStepLength < 0.00001) {
+		return 0.0;
+	}
+
+	float viewDistance = length(viewPos);
+	if (viewDistance < 7.0) {
+		return 0.0;
+	}
+
+	vec3 progress = shadowRayStart.xyz + dV * vspVolumetricJitter(gl_FragCoord.xy);
+	float segmentDepth = clamp(viewDistance / 820.0 / float(maxSamples), 0.018, 0.26);
+	float stepScatter = 1.0 - exp(-segmentDepth);
+	float stepTransmittance = exp(-segmentDepth);
+	float transmittance = 1.0;
+	float scattered = 0.0;
+
+	for (int i = 0; i < maxSamples; i++) {
+		float inLight = texture(shadowMapFar, vec3(progress.xy, progress.z - 0.0009));
+		scattered += inLight * stepScatter * transmittance;
+		transmittance *= stepTransmittance;
+		if (transmittance < 0.035) break;
+		progress += dV;
+	}
+
+	float normalOut = clamp(scattered * 2.8, 0.0, 1.0);
+	float shadowLightLen = max(length(shadowLightPos.xyz), 0.00001);
+	float phase = vspVolumetricPhase(dot(dV / rayStepLength, shadowLightPos.xyz / shadowLightLen));
+	float daylight = clamp(realCloudShadowDaylight + realMoonLightStrength * 0.55, 0.0, 1.0);
+	float fogGate = 1.0 - smoothstep(0.58, 0.98, fogAmount);
+	float shaped = clamp(normalOut * phase * daylight * fogGate, 0.0, 1.0);
+	return min(0.58, pow(shaped, 0.82) * 0.52);
+#endif
 	return 0.0;
 }
 
 vec4 applyWetSurface(vec4 texColor, vec3 normal, vec3 worldPos, float fogAmount, float glowLevel) {
-	float upness = max(0.0, normal.y);
-	float wetness = clamp(dropletIntensity * upness * (1.0 - fogAmount) * (1.0 - min(1.0, glowLevel)), 0.0, 1.0);
-	if (wetness <= 0.001) return texColor;
-	
-	float breakup = 0.68 + 0.32 * gnoise(vec3(worldPos.x * 0.22, worldPos.z * 0.22, windWaveCounter * 0.15));
-	float fine = smoothstep(0.58, 0.92, gnoise(vec3(worldPos.x * 1.9, worldPos.z * 1.9, windWaveCounter * 0.28)));
-	float daylight = clamp(realCloudShadowDaylight, 0.0, 1.0);
-	float shine = pow(max(0.0, dot(normalize(normal), lightPosition)), 14.0) * shadowIntensity * (0.35 + daylight * 0.65);
-	vec3 wetTint = mix(texColor.rgb * vec3(0.70, 0.76, 0.82), waterMurkColor.rgb * 0.38, 0.16);
-	vec3 glint = mix(vec3(0.14, 0.17, 0.19), vec3(0.55, 0.65, 0.75), daylight);
-	texColor.rgb = mix(texColor.rgb, wetTint, wetness * breakup * 0.34);
-	texColor.rgb += glint * wetness * (shine * 0.55 + fine * 0.045);
-	
 	return texColor;
 }
 

@@ -36,6 +36,7 @@ uniform vec2 blockTextureSize;
 
 uniform vec3 playerViewVec;
 uniform vec3 sunPosRel;
+uniform vec3 lightPosition;
 uniform vec3 playerPosForFoam;
 uniform float subpixelPaddingX;
 uniform float subpixelPaddingY;
@@ -131,6 +132,9 @@ void main(void)
 	
 
 	calcShadowMapCoords(modelViewMatrix, worldPos);
+#if GODRAYS > 0
+	prepareVolumetricLighting(lightPosition, rgbaLightIn);
+#endif
 	calcColorMapUvs(colormapData, truePos + vec4(playerpos, 1), rgbaLightIn.a, false);
 	
 	// We pretend the decal is closer to the camera to enforce it always being drawn on top
