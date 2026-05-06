@@ -194,10 +194,10 @@ void main(void)
 	
 	
 	#if GODRAYS > 0
-		vec3 godrays = texture(godrayParts, texCoord).rgb;
+		vec3 godrays = min(texture(godrayParts, texCoord).rgb, vec3(0.30));
 		float godrayLuma = Luma(godrays);
-		color.rgb += godrays * (0.90 + clamp(godrayIntensity, 0.0, 0.35) * 0.55);
-		color.rgb += vec3(1.0, 0.88, 0.68) * clamp(godrayIntensity, 0.0, 0.35) * 0.018 * (1.0 - smoothstep(0.02, 0.12, godrayLuma));
+		float rayBlend = smoothstep(0.004, 0.16, godrayLuma);
+		color.rgb += godrays * (0.48 + rayBlend * 0.24);
 		color.rgb = ApplyDICETonemap(color.rgb);
 		color.a=1;
 	#endif

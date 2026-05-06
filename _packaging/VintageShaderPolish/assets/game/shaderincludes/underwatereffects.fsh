@@ -94,35 +94,10 @@ float vspVolumetricJitter(vec2 p) {
 }
 
 float vspVolumetricPhase(float cosTheta) {
-	float forward = clamp(cosTheta * 0.5 + 0.5, 0.0, 1.0);
-	return 0.32 + 0.12 * cosTheta * cosTheta + pow(forward, 4.0) * 0.74;
+	return 0.58 + 0.08 * cosTheta * cosTheta;
 }
 
 float calculateVspVolumetricScatter(vec3 viewPos, vec3 normal, float fogAmount) {
-	#if GODRAYS > 0 && SHADOWQUALITY > 0
-	float celestial = clamp(realCloudShadowDaylight + realMoonLightStrength * 0.55, 0.0, 1.0);
-	if (celestial <= 0.002 || shadowCoordsFar.w <= 0.001 || shadowCoordsFar.z >= 0.999) return 0.0;
-	if (shadowCoordsFar.x <= 0.02 || shadowCoordsFar.x >= 0.98 || shadowCoordsFar.y <= 0.02 || shadowCoordsFar.y >= 0.98) return 0.0;
-	
-	float viewDistance = length(viewPos);
-	if (viewDistance < 8.0) return 0.0;
-	
-	vec3 lightDir = normalize(realCloudShadowLightDir);
-	float ndl = max(0.0, dot(normalize(normal), lightDir));
-	float phase = vspVolumetricPhase(dot(normalize(viewPos), lightDir));
-	float distanceFade = smoothstep(12.0, 180.0, viewDistance) * (1.0 - smoothstep(780.0, 1300.0, viewDistance));
-	float fogFade = 1.0 - smoothstep(0.58, 0.96, fogAmount);
-	
-	vec2 rayStep = normalize(lightDir.xz + vec2(0.0001)) * 0.0022;
-	vec2 jitter = rayStep * vspVolumetricJitter(gl_FragCoord.xy);
-	float lit = 0.0;
-	lit += texture(shadowMapFar, vec3(shadowCoordsFar.xy + jitter, shadowCoordsFar.z - 0.0009)) * 0.46;
-	lit += texture(shadowMapFar, vec3(shadowCoordsFar.xy + rayStep * 1.7 + jitter, shadowCoordsFar.z - 0.0012)) * 0.31;
-	lit += texture(shadowMapFar, vec3(shadowCoordsFar.xy + rayStep * 3.4 + jitter, shadowCoordsFar.z - 0.0015)) * 0.23;
-	
-	float scatter = lit * phase * distanceFade * fogFade * celestial * (0.38 + ndl * 0.38);
-	return clamp(pow(scatter, 0.82) * 0.58, 0.0, 0.62);
-	#endif
 	return 0.0;
 }
 

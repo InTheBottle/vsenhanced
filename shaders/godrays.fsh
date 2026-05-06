@@ -7,6 +7,11 @@ uniform float realCloudShadowMapWidth;
 uniform vec3 realCloudShadowOffset;
 uniform float realCloudShadowStrength;
 uniform vec3 realCloudShadowLightDir;
+uniform float realCloudShadowDaylight;
+uniform float realMoonLightStrength;
+uniform vec3 sunPos3dIn;
+uniform mat4 invProjectionMatrix;
+uniform mat4 invModelViewMatrix;
 
 
 in vec2 texCoord;
@@ -17,12 +22,11 @@ in float direction;
 
 out vec4 outColor;
 
+const float cloudTileSize = 50.0;
+const vec2 cloudLayerBounds = vec2(-62.5, 512.5);
 
-// Falloff over distance
-const float decay = 0.9985; 
-
-vec3 getSunRayColor(vec2 nSunPos) {
-	float sunHeight = clamp(nSunPos.y, 0.0, 1.0);
+vec3 getSunRayColor() {
+	float sunHeight = clamp(realCloudShadowLightDir.y, 0.0, 1.0);
 	float horizonWarmth = 1.0 - smoothstep(0.28, 0.68, sunHeight);
 	vec3 lowSun = vec3(1.0, 0.68, 0.42);
 	vec3 highSun = vec3(1.0, 0.92, 0.74);
@@ -32,107 +36,135 @@ vec3 getSunRayColor(vec2 nSunPos) {
 	return mix(sunColor, moonColor, moonBlend * 0.72);
 }
 
-float sampleCloudBreakup(vec2 uv, vec2 nSunPos, float stepIndex) {
-	if (realCloudShadowStrength <= 0.01 || realCloudShadowMapWidth <= 1.0) {
-		return 1.0;
+float hash12(vec2 p) {
+	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+	p3 += dot(p3, p3.yzx + 33.33);
+	return fract((p3.x + p3.y) * p3.z);
+}
+
+vec3 getCameraWorldPosition() {
+	return (invModelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+}
+
+vec3 getWorldRay(vec2 uv) {
+	vec4 viewPos = invProjectionMatrix * vec4(uv * 2.0 - 1.0, -1.0, 1.0);
+	if (abs(viewPos.w) > 0.000001) {
+		viewPos.xyz /= viewPos.w;
 	}
-
-	vec2 ray = uv - nSunPos;
-	vec2 wind = realCloudShadowOffset.xz / max(realCloudShadowMapWidth * 50.0, 1.0);
-	vec2 lightDrift = normalize(realCloudShadowLightDir.xz + vec2(0.0001)) * 0.035;
-	vec2 mapUv = fract(vec2(0.5) + wind + ray * vec2(0.72, 0.58) + lightDrift + stepIndex * lightDrift * 0.012);
-	vec2 texel = vec2(1.0 / realCloudShadowMapWidth);
-
-	float density = texture(realCloudShadowMap, mapUv).r * 0.60;
-	density += texture(realCloudShadowMap, mapUv + texel * vec2( 1.35,  0.0)).r * 0.14;
-	density += texture(realCloudShadowMap, mapUv + texel * vec2( 0.0, -1.35)).r * 0.14;
-
-	float clearGap = 1.0 - smoothstep(0.12, 0.62, density);
-	float silverEdge = smoothstep(0.08, 0.34, density) * (1.0 - smoothstep(0.48, 0.92, density));
-	float blocker = smoothstep(0.58, 0.95, density);
-	return clamp(0.72 + clearGap * 0.50 + silverEdge * 0.52 - blocker * 0.22, 0.34, 1.56);
+	viewPos.w = 0.0;
+	return normalize((invModelViewMatrix * viewPos).xyz);
 }
 
-float sampleRayMask(vec2 uv, vec2 nSunPos, float stepIndex, float rayStrength) {
-	vec4 glowData = texture(glowParts, uv);
-	float cloudEdgeSource = smoothstep(0.04, 0.42, glowData.a) * (1.0 - smoothstep(0.76, 1.0, glowData.a));
-	float volumeShaft = smoothstep(0.025, 0.58, glowData.g);
-	float glowSample = glowData.g * 2.05 + cloudEdgeSource * rayStrength * 0.95;
-	float mask = max(smoothstep(0.012, 0.36, glowSample), volumeShaft * rayStrength);
-	vec2 toSun = nSunPos - uv;
-	float radial = 1.0 - smoothstep(0.05, 0.92, length(toSun));
-	float breakup = sampleCloudBreakup(uv, nSunPos, stepIndex);
-	float atmosphericBeam = radial * rayStrength * (0.20 + 0.42 * breakup);
-	return max(mask, atmosphericBeam) * breakup;
+vec2 intersectCloudLayer(float originY, float dirY) {
+	if (abs(dirY) < 0.0001) return vec2(-1.0);
+	vec2 t = (cloudLayerBounds - originY) / dirY;
+	float nearT = min(t.x, t.y);
+	float farT = max(t.x, t.y);
+	if (farT < 0.0) return vec2(-1.0);
+	return vec2(max(nearT, 0.0), farT - max(nearT, 0.0));
 }
 
+float sampleCloudVolume(vec3 worldPos) {
+	if (realCloudShadowMapWidth <= 1.0) return 0.0;
 
-vec2 clampDeltas(vec2 dtuv) {
-	// When looking 90 degrees away from the sun, dTuv gets very large and causes significant frame drops.
-	// I presume this is because the graphics card local texture cache is no longer effective due to the large uv coord jumps
-	if (length(dtuv) > 0.005) {
-		dtuv = normalize(dtuv) * 0.005;
+	vec3 local = worldPos;
+	local.y -= realCloudShadowOffset.y;
+	local.xz -= realCloudShadowOffset.xz;
+	local /= cloudTileSize;
+	vec2 mapPos = local.xz + realCloudShadowMapWidth * 0.5;
+	vec2 mapUv = mapPos / realCloudShadowMapWidth;
+	if (mapUv.x <= 0.001 || mapUv.y <= 0.001 || mapUv.x >= 0.999 || mapUv.y >= 0.999) return 0.0;
+
+	vec4 map = clamp(texture(realCloudShadowMap, mapUv), vec4(0.0), vec4(1.0));
+	float density = smoothstep(0.14, 0.70, map.r);
+	vec2 bounds = vec2(min(map.b, map.a), max(map.b, map.a));
+	float vertical = smoothstep(bounds.x - 0.12, bounds.x + 0.22, local.y) *
+		(1.0 - smoothstep(bounds.y - 0.22, bounds.y + 0.12, local.y));
+	return clamp(density * vertical, 0.0, 1.0);
+}
+
+float traceLightVisibility(vec3 worldPos, vec3 lightDir) {
+	float occlusion = 0.0;
+	float jitter = hash12(gl_FragCoord.xy + worldPos.xz * 0.013);
+
+	for (int i = 0; i < 7; i++) {
+		float fi = float(i) + jitter;
+		vec3 samplePos = worldPos + lightDir * (fi * 58.0 + 18.0);
+		float density = sampleCloudVolume(samplePos);
+		occlusion += (1.0 - occlusion) * density * 0.34;
+		if (occlusion > 0.92) break;
 	}
 	
-	return dtuv;
+	return clamp(1.0 - occlusion, 0.0, 1.0);
 }
 
-vec4 applyGodRays(in vec2 uv, in vec2 nSunPos) {
-	// Sample weight. Decays as we radiate outwards.
-	float radialDistance = length(uv - nSunPos);
-	float screenFade = smoothstep(1.15, 0.12, radialDistance);
-	float horizonFade = smoothstep(0.02, 0.18, nSunPos.y) * (1.0 - smoothstep(0.96, 1.0, nSunPos.y));
-	float cloudVeil = sampleCloudBreakup(mix(uv, nSunPos, 0.35), nSunPos, 0.0);
-	float rayStrength = smoothstep(0.045, 0.64, intensity) * horizonFade * (0.92 + cloudVeil * 0.34);
-	if (rayStrength * screenFade <= 0.002) {
+float visibilityEdge(vec3 worldPos, vec3 lightDir, vec3 sideDir) {
+	float center = traceLightVisibility(worldPos, lightDir);
+	float sideA = traceLightVisibility(worldPos + sideDir * 42.0, lightDir);
+	float sideB = traceLightVisibility(worldPos - sideDir * 42.0, lightDir);
+	float gradient = abs(center - sideA) + abs(center - sideB);
+	return clamp(center * 0.30 + gradient * 1.75 + center * (1.0 - center) * 1.15, 0.0, 1.0);
+}
+
+vec4 applyGodRays(in vec2 uv) {
+	float celestial = clamp(realCloudShadowDaylight + realMoonLightStrength * 0.70, 0.0, 1.0);
+	float rayStrength = smoothstep(0.025, 0.38, intensity) * celestial;
+	if (rayStrength <= 0.002 || realCloudShadowMapWidth <= 1.0 || realCloudShadowStrength <= 0.01) {
 		return vec4(0.0);
 	}
 
-	float weight = rayStrength * screenFade / 27.0;
+	vec3 cameraWorld = getCameraWorldPosition();
+	vec3 viewDir = getWorldRay(uv);
+	vec3 lightDir = normalize(realCloudShadowLightDir);
+	vec2 layer = intersectCloudLayer(cameraWorld.y - realCloudShadowOffset.y, viewDir.y);
+	if (layer.x < 0.0 || layer.y <= 0.0) {
+		return vec4(0.0);
+	}
 
-	int samples = int(mix(36.0, 84.0, rayStrength));
+	float startT = max(20.0, layer.x - 280.0);
+	float endT = min(layer.x + layer.y + 160.0, 1450.0);
+	if (endT <= startT) return vec4(0.0);
 
-	// Short deltas near the sun
-	vec2 sdTuv = clampDeltas((nSunPos - uv) * max(rayStrength, 0.08) / 220 * direction);
+	vec3 sideDir = cross(viewDir, vec3(0.0, 1.0, 0.0));
+	if (dot(sideDir, sideDir) < 0.001) {
+		sideDir = vec3(1.0, 0.0, 0.0);
+	} else {
+		sideDir = normalize(sideDir);
+	}
+
+	const int viewSamples = 12;
+	float jitter = hash12(gl_FragCoord.xy + iGlobalTime);
+	float stepLen = (endT - startT) / float(viewSamples);
+	float phase = 0.66 + 0.34 * pow(max(0.0, dot(viewDir, lightDir)), 2.0);
+	float transmittance = 1.0;
+	float scatter = 0.0;
 	
-	// Large deltas far away from the sun where precision matters less and where is more important that the ray travels as far as possible
-	vec2 ldTuv = clampDeltas((nSunPos - uv) * max(rayStrength, 0.08) / 84 * direction);
-	
-	vec2 dTuv = sdTuv;
-	
-	
-	vec3 rayColor = getSunRayColor(nSunPos);
-	float glow = sampleRayMask(uv, nSunPos, 0.0, rayStrength);
-	vec4 col = vec4(texture(inputTexture, uv).rgb * glow * rayColor * 0.46, glow * 0.38);
-    
-    for (float i=0.0; i < samples; i++) {
-		uv.x = clamp(uv.x + dTuv.x, 0, 1);
-		uv.y = clamp(uv.y + dTuv.y, 0, 1);
-        float mask = sampleRayMask(uv, nSunPos, i, rayStrength);
-        vec3 sampleColor = texture(inputTexture, uv).rgb;
-		float airSparkle = 0.92 + 0.08 * sin(i * 2.37 + iGlobalTime * 0.7);
-		float mist = smoothstep(0.08, 0.75, i / max(float(samples), 1.0));
-        col.rgb += mix(rayColor, sampleColor * rayColor, 0.14 + mist * 0.08) * mask * weight * airSparkle * 1.48;
-        col.a += mask * weight * 1.42;
-        weight *= decay;
-		
-		dTuv = mix(sdTuv, ldTuv, i/samples);
-    }
-	
-	// Seems to greatly reduce the sun turning into one massive white blob
-	float luma = dot(col.rgb, vec3(0.299, 0.587, 0.114));
-	col.rgb *= 1.0 - smoothstep(0.58, 1.16, luma) * 0.24;
-	col.rgb = min(col.rgb, vec3(0.86));
-	
-	col.a = min(1.0, col.a);
-	
-    return col;
+	for (int i = 0; i < viewSamples; i++) {
+		float fi = float(i) + jitter;
+		float t = startT + fi * stepLen;
+		vec3 samplePos = cameraWorld + viewDir * t;
+		float cloudDensity = sampleCloudVolume(samplePos);
+		float airFade = smoothstep(startT, startT + stepLen * 2.0, t) * (1.0 - smoothstep(endT - stepLen, endT, t));
+		float edgeLight = visibilityEdge(samplePos, lightDir, sideDir);
+		float cloudEdge = cloudDensity * (1.0 - smoothstep(0.68, 1.0, cloudDensity));
+		float airShaft = edgeLight * (0.16 + cloudEdge * 0.95);
+		float contribution = airShaft * airFade * transmittance;
+		scatter += contribution;
+		transmittance *= exp(-cloudDensity * 0.18);
+		if (transmittance < 0.08) break;
+	}
+
+	scatter = clamp(scatter / float(viewSamples) * rayStrength * phase * realCloudShadowStrength * 2.45, 0.0, 0.42);
+	vec3 rayColor = getSunRayColor();
+	vec3 color = rayColor * scatter;
+	color *= 1.0 - smoothstep(0.22, 0.42, dot(color, vec3(0.299, 0.587, 0.114))) * 0.30;
+	color = min(color, vec3(0.30));
+	return vec4(color, 1.0);
 }
 
 
 void main(void) {
-	vec2 nSunPos = (clamp(sunPosScreen.xy, -10, 10) + 1) / 2;	
-	outColor = applyGodRays(texCoord, nSunPos);	
+	outColor = applyGodRays(texCoord);
 	
 	outColor.a=1;
 }
