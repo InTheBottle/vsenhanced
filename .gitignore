@@ -1,1 +1,8 @@
 _reference/
+_build/
+.claude/
+*.zip
+code/**/bin/
+code/**/obj/
+_packaging/VintageShaderPolish/VintageShaderPolish.dll
+_packaging/VintageShaderPolish/assets/
