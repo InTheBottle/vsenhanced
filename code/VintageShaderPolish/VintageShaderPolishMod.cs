@@ -38,6 +38,9 @@ public sealed class VintageShaderPolishMod : ModSystem
 internal static class RealCloudShadowState
 {
     private const int CloudMapTextureUnit = 15;
+    private const int SceneDepthTextureUnit = 11;
+    private const int ShadowMapFarTextureUnit = 12;
+    private const int ShadowMapNearTextureUnit = 13;
     private const int ConsecutiveErrorThreshold = 8;
     private static bool disabledAfterError;
     private static int consecutiveErrors;
@@ -48,6 +51,7 @@ internal static class RealCloudShadowState
     private static bool loggedFirstBind;
     private static bool loggedFirstRendererCapture;
     private static bool loggedFirstGodrayRaymarch;
+    private static bool loggedFirstGodraySamplers;
     private static readonly HashSet<string> loggedBindPasses = new();
     private static ICoreClientAPI? api;
     private static readonly FieldInfo? CloudRendererTextureMapField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "TextureMap");
@@ -69,6 +73,7 @@ internal static class RealCloudShadowState
         loggedFirstBind = false;
         loggedFirstRendererCapture = false;
         loggedFirstGodrayRaymarch = false;
+        loggedFirstGodraySamplers = false;
         CloudMapTextureId = 0;
         CloudMapWidth = 0f;
         CloudOffset = null;
@@ -227,6 +232,10 @@ internal static class RealCloudShadowState
                     loggedFirstGodrayRaymarch = true;
                     api.Logger.Notification("Vintage Shader Polish: godray raymarch uniforms bound. invProjection={0}, invModelView={1}, cameraWorldPos={2}.", wantsInvProjection, wantsInvModelView, wantsCameraWorldPos);
                 }
+            }
+            if (shader.PassName == "godrays")
+            {
+                ApplyGodraySamplers(shader);
             }
             // For passes where we deliberately skip the cloud-sampler bind
             // (e.g. godrays — see ShouldBindCloudMap), force width to 0 so the
@@ -410,6 +419,87 @@ internal static class RealCloudShadowState
         if (wantsFogColor)
         {
             shader.Uniform("fogColor", api!.Ambient.BlendedFogColor);
+        }
+    }
+
+    // Bind scene depth + cascaded shadow maps + matrices to the godrays pass
+    // so the shader can ray-march through atmosphere from camera to scene
+    // depth and test sun visibility against the directional shadow buffers.
+    // Without these, the godrays pass only sees scene color + glow, which is
+    // why the engine's stock shader has to fake it with a 2D radial smear.
+    private static void ApplyGodraySamplers(ShaderProgramBase shader)
+    {
+        if (api == null) return;
+        var fbs = api.Render.FrameBuffers;
+        if (fbs == null) return;
+
+        FrameBufferRef? primary = fbs.Count > 0 ? fbs[0] : null;
+        FrameBufferRef? shadowFar = fbs.Count > 11 ? fbs[11] : null;
+        FrameBufferRef? shadowNear = fbs.Count > 12 ? fbs[12] : null;
+
+        if (shader.HasUniform("sceneDepthTex") && primary != null && primary.DepthTextureId > 0)
+        {
+            int prevActive = GL.GetInteger(GetPName.ActiveTexture);
+            shader.BindTexture2D("sceneDepthTex", primary.DepthTextureId, SceneDepthTextureUnit);
+            GL.ActiveTexture((TextureUnit)prevActive);
+        }
+        if (shader.HasUniform("shadowMapFar") && shadowFar != null && shadowFar.DepthTextureId > 0)
+        {
+            int prevActive = GL.GetInteger(GetPName.ActiveTexture);
+            shader.BindTexture2D("shadowMapFar", shadowFar.DepthTextureId, ShadowMapFarTextureUnit);
+            GL.ActiveTexture((TextureUnit)prevActive);
+        }
+        if (shader.HasUniform("shadowMapNear") && shadowNear != null && shadowNear.DepthTextureId > 0)
+        {
+            int prevActive = GL.GetInteger(GetPName.ActiveTexture);
+            shader.BindTexture2D("shadowMapNear", shadowNear.DepthTextureId, ShadowMapNearTextureUnit);
+            GL.ActiveTexture((TextureUnit)prevActive);
+        }
+
+        var u = api.Render.ShaderUniforms;
+        if (shader.HasUniform("toShadowMapSpaceMatrixFar") && u.ToShadowMapSpaceMatrixFar != null)
+        {
+            shader.UniformMatrix("toShadowMapSpaceMatrixFar", u.ToShadowMapSpaceMatrixFar);
+        }
+        if (shader.HasUniform("toShadowMapSpaceMatrixNear") && u.ToShadowMapSpaceMatrixNear != null)
+        {
+            shader.UniformMatrix("toShadowMapSpaceMatrixNear", u.ToShadowMapSpaceMatrixNear);
+        }
+        if (shader.HasUniform("shadowRangeFar"))
+        {
+            shader.Uniform("shadowRangeFar", u.ShadowRangeFar);
+        }
+        if (shader.HasUniform("shadowRangeNear"))
+        {
+            shader.Uniform("shadowRangeNear", u.ShadowRangeNear);
+        }
+        if (shader.HasUniform("shadowZExtendFar"))
+        {
+            shader.Uniform("shadowZExtendFar", u.ShadowZExtendFar);
+        }
+        if (shader.HasUniform("shadowZExtendNear"))
+        {
+            shader.Uniform("shadowZExtendNear", u.ShadowZExtendNear);
+        }
+        if (shader.HasUniform("shadowMapWidthInv") && shadowFar != null && shadowFar.Width > 0)
+        {
+            shader.Uniform("shadowMapWidthInv", 1f / shadowFar.Width);
+        }
+        if (shader.HasUniform("shadowMapHeightInv") && shadowFar != null && shadowFar.Height > 0)
+        {
+            shader.Uniform("shadowMapHeightInv", 1f / shadowFar.Height);
+        }
+
+        if (!loggedFirstGodraySamplers)
+        {
+            loggedFirstGodraySamplers = true;
+            api.Logger.Notification(
+                "Vintage Shader Polish: godrays world-space samplers bound. sceneDepth={0}, shadowFar={1}, shadowNear={2}, shadowFarSize={3}x{4}.",
+                primary?.DepthTextureId ?? 0,
+                shadowFar?.DepthTextureId ?? 0,
+                shadowNear?.DepthTextureId ?? 0,
+                shadowFar?.Width ?? 0,
+                shadowFar?.Height ?? 0);
         }
     }
 

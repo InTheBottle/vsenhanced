@@ -12,6 +12,10 @@ uniform vec3 cloudOffset;
 uniform vec3 realCloudShadowLightDir;
 uniform float realCloudShadowDaylight;
 uniform float realMoonLightStrength;
+// True daylight (engine, NOT max'd with moonlight). Used to gate the
+// directional cloud inscatter off after sunset so we don't get a phantom
+// halo at the antipodal-sun position.
+uniform float dayLightStrength;
 uniform int frame;
 uniform float time;
 uniform int FrameWidth;
@@ -96,6 +100,29 @@ float halfsmooth(float x, float t){
     return x > t ? (x - t / 2.0) : (x * x * x * (1.0 - x * 0.5 / t) / t / t);
 }
 
+// Cornette-Shanks phase function: forward-biased, integrates to 1/(4pi).
+// g controls anisotropy: 0 = isotropic, ~0.6-0.8 = clouds (forward), -ve = backward.
+float phaseCS(float cosTheta, float g) {
+    float gSq = g * g;
+    float num = 3.0 * (1.0 - gSq) * (1.0 + cosTheta * cosTheta);
+    float den = 2.0 * (2.0 + gSq) * pow(max(0.0001, 1.0 + gSq - 2.0 * g * cosTheta), 1.5);
+    return num / (den * 12.566371);
+}
+
+// Estimate sun visibility at cell `p` by walking the cloud map a few cells
+// along the sun direction. The cloud map is a top-down density texture, so
+// stepping in the xz projection of the sun direction approximates the optical
+// depth between this cell and the top of the cloud volume.
+float sunVisibilityAt(ivec2 p) {
+    vec3 sd = normalize(realCloudShadowLightDir);
+    vec2 sunStep = sd.xz / max(0.12, abs(sd.y));
+    float occlusion = 0.0;
+    occlusion += texelFetch(cloudMap, p + ivec2(floor(sunStep * 1.0)), 0).r;
+    occlusion += texelFetch(cloudMap, p + ivec2(floor(sunStep * 2.5)), 0).r * 0.6;
+    occlusion += texelFetch(cloudMap, p + ivec2(floor(sunStep * 5.0)), 0).r * 0.35;
+    return exp(-occlusion * 0.55);
+}
+
 vec4 traverse(vec3 o, vec3 d, float far, float T){
 
     ivec2 p = ivec2(floor(o.xz));
@@ -107,6 +134,21 @@ vec4 traverse(vec3 o, vec3 d, float far, float T){
     tmax.y = (d.z > 0.0 ? floor(o.z) + 1.0 - o.z : o.z - floor(o.z)) * tdelta.y;
     float t = 0.0;
     vec4 k = vec4(0.0);
+
+    vec3 sunDir = normalize(realCloudShadowLightDir);
+    float cosTheta = dot(d, sunDir);
+    // Cornette-Shanks with moderate g -- tight enough for visible silver-
+    // lining near the sun, broad enough that 90 deg off doesn't go fully dark.
+    float phase = phaseCS(cosTheta, 0.55);
+    float sunElev = smoothstep(-0.04, 0.20, sunDir.y);
+    vec3 sunEnergy = mix(vec3(1.10, 0.96, 0.78), vec3(1.05, 1.00, 0.92), sunElev);
+    // Day-only directional inscatter. realCloudShadowDaylight is max(day,moon)
+    // so it stays high at night and would give a phantom halo at the flipped-
+    // sun direction (which is NOT where the moon is rendered). dayLightStrength
+    // is the true daylight that goes to 0 at night, so we drive directional
+    // inscatter from that and add a tiny moonlight floor for night ambience.
+    float dayGate = smoothstep(0.04, 0.22, dayLightStrength);
+    sunEnergy *= clamp(dayLightStrength * dayGate + realMoonLightStrength * 0.04, 0.0, 1.4);
 
     for(int i = 0; i < 200; i++){
 
@@ -127,6 +169,13 @@ vec4 traverse(vec3 o, vec3 d, float far, float T){
             if(v > 0.0){
 
                 k += (1.0 - k.a) * col * v;
+
+                // Cloud-body inscatter: scales with v so it concentrates at
+                // actual scattering mass. Coefficient is tiny -- even 200 cells
+                // accumulating forward-phase x full-vis sums to < 0.4.
+                float vis = sunVisibilityAt(p);
+                vec3 inscatter = sunEnergy * phase * vis * v * 0.045;
+                k.rgb += (1.0 - k.a) * inscatter;
 
                 float bin = log(halfsmooth((T + t) * 50.0, 500.0) / OIT_BIN_SCALE + 1.0);
                 for(int i = 0; i < OIT_BINS; i++){
@@ -157,20 +206,6 @@ vec4 traverse(vec3 o, vec3 d, float far, float T){
 
     return k;
 
-}
-
-float getVolumetricCloudRaySource(vec3 viewDir, float alpha) {
-	vec3 lightDir = normalize(realCloudShadowLightDir);
-	float facing = max(0.0, dot(viewDir, lightDir));
-	float edge = smoothstep(0.010, 0.26, alpha) * (1.0 - smoothstep(0.64, 0.98, alpha));
-	float body = smoothstep(0.04, 0.44, alpha) * (1.0 - smoothstep(0.80, 1.0, alpha));
-	float veil = smoothstep(0.02, 0.34, alpha) * (1.0 - smoothstep(0.92, 1.0, alpha));
-	float elevation = smoothstep(0.018, 0.16, lightDir.y);
-	float moon = clamp(realMoonLightStrength, 0.0, 1.0);
-	float celestial = clamp(realCloudShadowDaylight + moon * 0.72, 0.0, 1.0);
-	float narrowBeam = pow(facing, 2.35) * (edge * 0.92 + body * 0.30 + veil * 0.18);
-	float broadShaft = smoothstep(0.02, 0.58, facing) * (edge * 0.46 + veil * 0.38 + body * 0.14);
-	return clamp((narrowBeam + broadShaft) * elevation * celestial, 0.0, 0.92);
 }
 
 void main(){

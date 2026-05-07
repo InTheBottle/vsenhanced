@@ -6,3 +6,4 @@ code/**/bin/
 code/**/obj/
 _packaging/VintageShaderPolish/VintageShaderPolish.dll
 _packaging/VintageShaderPolish/assets/
+_inspect/
