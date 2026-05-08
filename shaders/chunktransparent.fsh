@@ -162,6 +162,7 @@ void main()
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));
 	texColor.rgb = applyMoonDirectLight(texColor.rgb, normal, fogAmount);
+	texColor.rgb = applyHemisphericalAmbient(texColor.rgb, normal, dayLightStrength, 0.18);
 	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
 	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
 	texColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);

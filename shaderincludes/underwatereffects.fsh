@@ -9,6 +9,7 @@ uniform float realCloudShadowStrength;
 uniform vec3 realCloudShadowLightDir;
 uniform float realCloudShadowDaylight;
 uniform float realMoonLightStrength;
+uniform float dayLightStrength;
 
 float getSkyMurkiness() {
 	if (cameraUnderwater > 0.7) {
@@ -88,6 +89,34 @@ vec3 applyMoonDirectLight(vec3 color, vec3 normal, float fogAmount) {
 	float direct = pow(ndl, 0.85) * upness * moon * (1.0 - smoothstep(0.38, 0.92, fogAmount));
 	vec3 moonTint = vec3(0.46, 0.55, 0.78);
 	return color + (color * moonTint * 0.22 + vec3(0.006, 0.009, 0.017)) * direct;
+}
+
+// Analytic hemispherical ambient: zenith/horizon/ground tint by face normal + day-night blend; cheap IBL proxy.
+vec3 vspHemiAmbient(vec3 normal, float dayStrength) {
+	float d = clamp(dayStrength, 0.0, 1.0);
+
+	vec3 zenithDay = vec3(0.45, 0.62, 0.95);
+	vec3 zenithNight = vec3(0.06, 0.10, 0.20);
+	vec3 horizonDay = vec3(0.82, 0.88, 0.98);
+	vec3 horizonNight = vec3(0.16, 0.20, 0.34);
+	vec3 horizonTwilight = vec3(0.96, 0.55, 0.28);
+
+	float twilight = smoothstep(0.02, 0.30, d) * (1.0 - smoothstep(0.30, 0.75, d));
+
+	vec3 zenith = mix(zenithNight, zenithDay, d);
+	vec3 horizon = mix(horizonNight, horizonDay, d);
+	horizon = mix(horizon, horizonTwilight, twilight * 0.65);
+
+	float upness = clamp(normal.y, -1.0, 1.0);
+	vec3 sky = mix(horizon, zenith, smoothstep(0.0, 0.7, upness));
+	vec3 ground = horizon * vec3(0.50, 0.55, 0.42);
+	return upness > 0.0 ? sky : mix(horizon, ground, -upness);
+}
+
+// Subtle multiplicative tint so engine ambient/sky-light remains dominant.
+vec3 applyHemisphericalAmbient(vec3 color, vec3 normal, float dayStrength, float strength) {
+	vec3 envColor = vspHemiAmbient(normal, dayStrength);
+	return color * mix(vec3(1.0), envColor, strength);
 }
 
 float vspVolumetricJitter(vec2 p) {
