@@ -1,10 +1,9 @@
 #version 330 core
 
-// Engine-bound samplers (kept for engine compatibility; not used directly).
+// Engine-bound; kept and referenced so the linker doesn't prune them.
 uniform sampler2D inputTexture;
 uniform sampler2D glowParts;
 
-// Mod-bound samplers/uniforms (see VintageShaderPolishMod.cs:ApplyGodraySamplers).
 uniform sampler2D sceneDepthTex;
 #if SHADOWQUALITY > 0
 uniform sampler2DShadow shadowMapFar;
@@ -23,9 +22,9 @@ uniform mat4 invModelViewMatrix;
 uniform vec3 realCloudShadowLightDir;
 uniform float realCloudShadowDaylight;
 uniform float realMoonLightStrength;
-// True daylight (engine, NOT max'd with moonlight). Goes to 0 at night, used
-// here as the "is it actually day" signal to gate godrays off after sunset.
 uniform float dayLightStrength;
+// trueSunPos.y < 0 means sun below horizon (real night).
+uniform vec3 trueSunPos;
 
 uniform vec2 invFrameSizeIn;
 uniform float iGlobalTimeIn;
@@ -34,9 +33,6 @@ in vec2 texCoord;
 out vec4 outColor;
 
 const int NUM_STEPS = 56;
-// Per-world-unit atmospheric scattering coefficient. Tuned high enough that
-// shafts are visible everywhere the sun isn't fully blocked, while Beer's-law
-// transmittance keeps the bright forward direction from saturating to white.
 const float ATM_SIGMA = 0.020;
 
 float phaseHG(float cosTheta, float g) {
@@ -56,9 +52,7 @@ vec3 reconstructWorldPoint(vec2 uv, float depth) {
     return (invModelViewMatrix * vec4(viewPos.xyz, 1.0)).xyz;
 }
 
-// Test sun visibility at a camera-relative world position by sampling the
-// cascaded shadow maps. Engine matrices already produce [0,1] UV+depth, so
-// no *0.5+0.5 here. Returns 1.0 = lit, 0.0 = shadowed.
+// Engine matrices already produce [0,1] UV+depth, no *0.5+0.5 needed.
 float sampleSunVisibility(vec3 worldPos) {
 #if SHADOWQUALITY > 1
     vec4 cn = toShadowMapSpaceMatrixNear * vec4(worldPos, 1.0);
@@ -75,27 +69,27 @@ float sampleSunVisibility(vec3 worldPos) {
     return 1.0;
 }
 
-// Interleaved gradient noise (Jimenez 2014). Produces a blue-noise-like
-// spatial distribution that's much less perceptually grainy than the hash
-// fract(sin(...)) trick when used as march-jitter offsets.
+// Interleaved gradient noise (Jimenez 2014) -- blue-noise-like, not grainy.
 float ign(vec2 frag) {
     return fract(52.9829189 * fract(0.06711056 * frag.x + 0.00583715 * frag.y));
 }
 
 void main(void) {
+    if (trueSunPos.y < 0.02) {
+        vec3 a = texture(inputTexture, texCoord).rgb;
+        vec3 b = texture(glowParts, texCoord).rgb;
+        outColor = vec4(a * b * 1e-9, 1.0);
+        return;
+    }
+
     vec3 viewDir = reconstructWorldRay(texCoord);
 
     float depth = texture(sceneDepthTex, texCoord).r;
-    // True sky pixel: depth at far plane. We skip shadow sampling for these
-    // because view-aligned-with-sun rays produce bogus self-shadow tests
-    // (samples along the ray project to similar UV but increasing depth, so
-    // far samples get shadowed by their own near neighbors).
+    // Skip shadow sampling for sky pixels: view-aligned-with-sun rays produce bogus self-shadow tests.
     bool isSky = depth >= 0.9999;
 #if SHADOWQUALITY > 0
     float marchRange = shadowRangeFar;
 #else
-    // No shadow info -- fall back to a fixed atmospheric range so we still
-    // get a phase-shaped halo around the sun, just no occlusion variation.
     float marchRange = 120.0;
 #endif
     float maxDist;
@@ -107,13 +101,11 @@ void main(void) {
     }
     maxDist = min(maxDist, marchRange * 1.40);
 
-    // Day-only gate: at night realCloudShadowDaylight is moonlight-substituted
-    // and stays >0, so we'd still produce a corona around the antipodal-sun
-    // point (which isn't even where the moon is). Cleaner to fade godrays out
-    // entirely after sunset.
-    float dayGate = smoothstep(0.04, 0.22, dayLightStrength);
-    if (maxDist < 0.5 || dayGate < 0.005) {
-        // Keep samplers referenced so the linker doesn't prune them.
+    float horizonRamp = smoothstep(0.02, 0.15, trueSunPos.y);
+    float lightRamp = smoothstep(0.10, 0.45, dayLightStrength);
+    float dayGate = horizonRamp * lightRamp;
+
+    if (maxDist < 0.5) {
         vec3 keep = texture(inputTexture, texCoord).rgb * texture(glowParts, texCoord).rgb;
         outColor = vec4(keep * 1e-8, 1.0);
         return;
@@ -125,8 +117,6 @@ void main(void) {
     vec3 sunDir = normalize(realCloudShadowLightDir);
     float cosTheta = dot(viewDir, sunDir);
 
-    // Phase: heavy forward bias for sharp sun shafts; small broad-lobe term
-    // keeps the sky from going pitch black 90 deg from the sun.
     float phase = mix(phaseHG(cosTheta, 0.78), phaseHG(cosTheta, 0.30), 0.15);
 
     float sunElev = smoothstep(-0.04, 0.20, sunDir.y);
@@ -140,9 +130,6 @@ void main(void) {
         if (t >= maxDist) break;
 
         vec3 sp = viewDir * t;
-        // For sky pixels we skip the shadow test (see isSky comment above);
-        // the only meaningful occluders along a ray that exits the world are
-        // clouds, and those get handled in cloudvolumetric.fsh.
         float vis = isSky ? 1.0 : sampleSunVisibility(sp);
 
         inscatter += sunCol * phase * vis * ATM_SIGMA * stepLen * transmittance;
@@ -152,12 +139,9 @@ void main(void) {
 
     inscatter *= strength * dayGate;
 
-    // Force-keep inputTexture/glowParts samplers in the linked program;
-    // the engine binds these by name and BindTexture2D throws if pruned.
+    // Keep samplers referenced.
     vec3 keep = texture(inputTexture, texCoord).rgb * texture(glowParts, texCoord).rgb;
     inscatter += keep * 1e-8;
 
-    // Soft compress so the godrays buffer stays bounded; final.fsh adds it
-    // additive on top of the scene color.
     outColor = vec4(inscatter / (inscatter + vec3(1.0)), 1.0);
 }

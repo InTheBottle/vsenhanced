@@ -145,7 +145,27 @@ float calculateVspVolumetricScatter(vec3 viewPos, vec3 normal, float fogAmount) 
 	return 0.0;
 }
 
+// Driven by VSEssentials.WeatherSystemClient.PrecIntensity via mod patch.
+uniform float precIntensity;
 vec4 applyWetSurface(vec4 texColor, vec3 normal, vec3 worldPos, float fogAmount, float glowLevel) {
+	if (precIntensity < 0.01) return texColor;
+
+	float upness = pow(clamp(normal.y, 0.0, 1.0), 1.4);
+	float exposed = 1.0 - smoothstep(0.05, 0.40, glowLevel);
+
+	vec3 hashIn = floor(worldPos * 0.18);
+	float wetMask = fract(sin(dot(hashIn, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+	wetMask = mix(0.55, 1.0, wetMask);
+
+	float wet = clamp(precIntensity, 0.0, 1.0) * upness * exposed * wetMask;
+	wet *= (1.0 - fogAmount);
+
+	vec3 darken = mix(vec3(1.0), vec3(0.55, 0.58, 0.66), wet);
+	vec3 wetCol = texColor.rgb * darken;
+	float luma = dot(wetCol, vec3(0.299, 0.587, 0.114));
+	wetCol = mix(vec3(luma), wetCol, mix(1.0, 1.18, wet));
+
+	texColor.rgb = mix(texColor.rgb, wetCol, wet);
 	return texColor;
 }
 

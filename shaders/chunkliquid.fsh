@@ -380,23 +380,40 @@ void main()
 				vec3 normal = normalize(vec3(dy, 1, -dy));
 				
 				float upness = max(0, dot(fragNormal, vec3(0,1,0))); // Only do specular reflections on up faces
-				
+
 				vec3 eye = normalize(vec3(fWorldPos.x, fWorldPos.y - 2, fWorldPos.z));
 				vec3 reflectionVec = reflect(sunPosRel, normal);
 				float p = dot(reflectionVec, eye);
+
+				// Procedural sky tint along reflected view ray, fresnel-mixed below.
+				vec3 reflView = reflect(-eye, normal);
+				float reflUp = clamp(reflView.y, 0.0, 1.0);
+				float reflSunDot = max(0.0, dot(reflView, sunPosRel));
+				vec3 zenithBlue = vec3(0.32, 0.48, 0.78);
+				vec3 horizonHaze = mix(reflectColor, vec3(0.78, 0.74, 0.66), 0.30);
+				vec3 skyRefl = mix(horizonHaze, zenithBlue, pow(reflUp, 0.7));
+				skyRefl = mix(skyRefl, sunColor, pow(reflSunDot, 8.0) * 0.45);
+				skyRefl = applyFog(vec4(skyRefl, 1.0), fogAmount).rgb;
+
+				float fresnelMix = clamp(fresnel * 0.85 + 0.10, 0.0, 1.0) * upness;
+				#if SHADOWQUALITY > 0
+				fresnelMix *= mix(0.55, 1.0, clamp(pow(shadowBright, 2.0), 0.0, 1.0));
+				#endif
+				texColor.rgb = mix(texColor.rgb, skyRefl, fresnelMix * 0.55);
+
 				if (p > 0) {
 					float sunb = clamp(sunPosRel.y * 10, 0, 1) * clamp(1.5 - sunPosRel.y, 0, 1) * sunSpecularIntensity;
-					
+
 					float specular = pow(p, 50) * sunb;
-					
+
 					#if SHADOWQUALITY > 0
 					float weight = upness * clamp(specular * clamp(pow(shadowBright, 4), 0, 1) * clamp(1.5 * shadowIntensity, 0, 1), 0, 1);
 					#else
 					float weight = upness * clamp(specular * clamp(pow(shadowBright, 4), 0, 1) * clamp(1.5, 0.0, 1.0), 0, 1);
 					#endif
-					
+
 					vec3 sunColf = applyFog(vec4(reflectColor, 1), fogAmount).rgb;
-					
+
 					texColor.rgb = mix(texColor.rgb, sunColf + noise1 * 0.2, weight);
 					texColor.a = mix(texColor.a, texColor.a + specular/2, weight);
 				}

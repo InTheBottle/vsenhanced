@@ -25,6 +25,7 @@ public sealed class VintageShaderPolishMod : ModSystem
         harmony = new Harmony(HarmonyId);
         harmony.PatchAll(typeof(VintageShaderPolishMod).Assembly);
         RealCloudShadowState.TryPatchCloudRendererMap(harmony);
+        RealCloudShadowState.LocateWeatherSystem();
         api.Logger.Notification("Vintage Shader Polish: sun-relative cloud shadow shader bridge enabled.");
     }
 
@@ -57,6 +58,11 @@ internal static class RealCloudShadowState
     private static readonly FieldInfo? CloudRendererTextureMapField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "TextureMap");
     private static readonly FieldInfo? CloudRendererOffsetField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererMap"), "offset");
     private static readonly FieldInfo? CloudRendererCloudTileLengthField = AccessTools.Field(AccessTools.TypeByName("FluffyClouds.CloudRendererBase"), "CloudTileLength");
+    // VSEssentials.WeatherSystemClient.BlendedWeatherData.PrecIntensity, accessed via reflection.
+    private static readonly Type? WeatherSystemClientType = AccessTools.TypeByName("Vintagestory.GameContent.WeatherSystemClient");
+    private static readonly PropertyInfo? BlendedWeatherDataProp = WeatherSystemClientType != null ? AccessTools.Property(WeatherSystemClientType, "BlendedWeatherData") : null;
+    private static readonly FieldInfo? PrecIntensityField = AccessTools.Field(AccessTools.TypeByName("Vintagestory.GameContent.WeatherDataSnapshot"), "PrecIntensity");
+    private static object? weatherSystemClient;
 
     internal static int CloudMapTextureId { get; set; }
     internal static float CloudMapWidth { get; set; }
@@ -81,6 +87,36 @@ internal static class RealCloudShadowState
     }
 
     internal static void SetApi(ICoreClientAPI clientApi) => api = clientApi;
+
+    internal static void LocateWeatherSystem()
+    {
+        if (api == null || WeatherSystemClientType == null) return;
+        foreach (var sys in api.ModLoader.Systems)
+        {
+            if (WeatherSystemClientType.IsInstanceOfType(sys))
+            {
+                weatherSystemClient = sys;
+                api.Logger.Notification("Vintage Shader Polish: located WeatherSystemClient for precipitation-driven shader effects.");
+                return;
+            }
+        }
+        api.Logger.Warning("Vintage Shader Polish: WeatherSystemClient not found; wet-block effects disabled.");
+    }
+
+    private static float GetPrecIntensity()
+    {
+        if (weatherSystemClient == null || BlendedWeatherDataProp == null || PrecIntensityField == null) return 0f;
+        try
+        {
+            object? snapshot = BlendedWeatherDataProp.GetValue(weatherSystemClient);
+            if (snapshot == null) return 0f;
+            return (float)(PrecIntensityField.GetValue(snapshot) ?? 0f);
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
 
     internal static void TryPatchCloudRendererMap(Harmony harmony)
     {
@@ -171,8 +207,7 @@ internal static class RealCloudShadowState
             return;
         }
 
-        // World/Calendar is null very briefly during shader reload before level init.
-        // Bail this frame instead of throwing — the bind will succeed next frame.
+        // World/Calendar briefly null during shader reload pre-level-init.
         if (api.World == null || api.World.Calendar == null)
         {
             return;
@@ -195,9 +230,11 @@ internal static class RealCloudShadowState
         bool wantsFlatFog = shader.HasUniform("flatFogDensity");
         bool wantsPlayerWaterDepth = shader.HasUniform("playerWaterDepth");
         bool wantsFogColor = shader.HasUniform("fogColor");
+        bool wantsPrecIntensity = shader.HasUniform("precIntensity");
+        bool wantsTrueSunPos = shader.HasUniform("trueSunPos");
         bool wantsRayState = wantsInvProjection || wantsInvModelView || wantsCameraWorldPos;
         bool wantsVolumetricState = wantsCameraWorldPosition || wantsSunLight || wantsDayLight || wantsShadowIntensity || wantsFlatFog || wantsPlayerWaterDepth || wantsFogColor;
-        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState;
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos;
         if (!wantsCloudState)
         {
             return;
@@ -224,6 +261,14 @@ internal static class RealCloudShadowState
             {
                 shader.Uniform("realMoonLightStrength", moonlight);
             }
+            if (wantsPrecIntensity)
+            {
+                shader.Uniform("precIntensity", GetPrecIntensity());
+            }
+            if (wantsTrueSunPos)
+            {
+                shader.Uniform("trueSunPos", api.World.Calendar.SunPositionNormalized);
+            }
             if (wantsRayState)
             {
                 ApplyRaymarchUniforms(shader, wantsInvProjection, wantsInvModelView, wantsCameraWorldPos);
@@ -237,10 +282,7 @@ internal static class RealCloudShadowState
             {
                 ApplyGodraySamplers(shader);
             }
-            // For passes where we deliberately skip the cloud-sampler bind
-            // (e.g. godrays — see ShouldBindCloudMap), force width to 0 so the
-            // shader's volumetric short-circuit triggers and never samples the
-            // unbound `realCloudShadowMap` slot.
+            // Width=0 short-circuits the volumetric path on passes (godrays) we deliberately skip binding.
             bool feedCloudState = hasCloudState && shouldBindCloudMap;
             if (wantsCloudMapWidth)
             {
@@ -351,11 +393,7 @@ internal static class RealCloudShadowState
             return false;
         }
 
-        // Binding the cloud-shadow sampler to the godrays pass triggers a
-        // GL_INVALID_OPERATION flood (observed in the VS log) that suppresses
-        // the godrays draw entirely. Restrict the bind to terrain passes — the
-        // godrays shader's volumetric path short-circuits when its cloud-map
-        // width uniform stays at zero.
+        // Cloud-sampler bind on godrays causes a GL_INVALID_OPERATION flood; terrain only.
         return IsTerrainPass(shader.PassName);
     }
 
@@ -422,11 +460,7 @@ internal static class RealCloudShadowState
         }
     }
 
-    // Bind scene depth + cascaded shadow maps + matrices to the godrays pass
-    // so the shader can ray-march through atmosphere from camera to scene
-    // depth and test sun visibility against the directional shadow buffers.
-    // Without these, the godrays pass only sees scene color + glow, which is
-    // why the engine's stock shader has to fake it with a 2D radial smear.
+    // Bind scene depth + cascaded shadow maps + matrices for world-space godray raymarching.
     private static void ApplyGodraySamplers(ShaderProgramBase shader)
     {
         if (api == null) return;
