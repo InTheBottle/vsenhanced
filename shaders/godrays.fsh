@@ -33,7 +33,7 @@ in vec2 texCoord;
 out vec4 outColor;
 
 const int NUM_STEPS = 56;
-const float ATM_SIGMA = 0.020;
+const float ATM_SIGMA = 0.032;
 
 float phaseHG(float cosTheta, float g) {
     float gSq = g * g;

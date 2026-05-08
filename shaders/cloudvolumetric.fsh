@@ -156,7 +156,7 @@ vec4 traverse(vec3 o, vec3 d, float far, float T){
 
                 // Cloud-body inscatter scaled by v so it concentrates at actual scattering mass.
                 float vis = sunVisibilityAt(p);
-                vec3 inscatter = sunEnergy * phase * vis * v * 0.045;
+                vec3 inscatter = sunEnergy * phase * vis * v * 0.10;
                 k.rgb += (1.0 - k.a) * inscatter;
 
                 float bin = log(halfsmooth((T + t) * 50.0, 500.0) / OIT_BIN_SCALE + 1.0);
