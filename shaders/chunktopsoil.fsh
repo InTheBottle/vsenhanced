@@ -183,6 +183,8 @@ void main()
 	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
 	outColor.rgb = applyMoonDirectLight(outColor.rgb, normal, fogAmount);
 	outColor.rgb = applyHemisphericalAmbient(outColor.rgb, normal, dayLightStrength, 0.18);
+	outColor.rgb = applyEmissiveBounce(outColor.rgb, blockLight, 0.55);
+	outColor.rgb = applyContactDarken(outColor.rgb, 0.20);
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(outColor.rgb, vec3(0.299, 0.587, 0.114)));
 	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);

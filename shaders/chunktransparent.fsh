@@ -163,6 +163,8 @@ void main()
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));
 	texColor.rgb = applyMoonDirectLight(texColor.rgb, normal, fogAmount);
 	texColor.rgb = applyHemisphericalAmbient(texColor.rgb, normal, dayLightStrength, 0.18);
+	texColor.rgb = applyEmissiveBounce(texColor.rgb, blockLight, 0.55);
+	texColor.rgb = applyContactDarken(texColor.rgb, 0.20);
 	// Subsurface translucency: leaves/grass glow warm when sun is behind the surface (wrap lighting model).
 	{
 		vec3 sssLightDir = normalize(realCloudShadowLightDir);

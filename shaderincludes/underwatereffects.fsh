@@ -119,6 +119,21 @@ vec3 applyHemisphericalAmbient(vec3 color, vec3 normal, float dayStrength, float
 	return color * mix(vec3(1.0), envColor, strength);
 }
 
+// Amplify color saturation of nearby block-light sources so torches/lava/forges visibly tint surfaces.
+vec3 applyEmissiveBounce(vec3 color, vec3 blockLight, float strength) {
+	float intensity = max(max(blockLight.r, blockLight.g), blockLight.b);
+	if (intensity < 0.05) return color;
+	vec3 chroma = blockLight / max(intensity, 0.001);
+	return color + color * (chroma - vec3(0.85)) * intensity * strength;
+}
+
+// Increase contrast between lit/unlit pixels to deepen crevices and corners (cheap fake-AO).
+vec3 applyContactDarken(vec3 color, float strength) {
+	float lumi = dot(color, vec3(0.299, 0.587, 0.114));
+	float darken = 1.0 - smoothstep(0.0, 0.30, 1.0 - lumi) * strength;
+	return color * darken;
+}
+
 float vspVolumetricJitter(vec2 p) {
 	return fract(0.75487765 * p.x + 0.56984026 * p.y);
 }
