@@ -241,39 +241,47 @@ vec4 applyFog(vec4 rgbaPixel, float fogWeight) {
 }
 
 
+// 9-tap Poisson disk for PCF. Pre-distributed unit-disk samples produce softer
+// shadow edges than a 3x3 grid at the same tap count without grid banding.
+const vec2 vspPoissonDisk9[9] = vec2[](
+	vec2( 0.000,  0.000),
+	vec2( 0.946, -0.769),
+	vec2(-0.094, -0.929),
+	vec2( 0.345,  0.294),
+	vec2(-0.916,  0.458),
+	vec2(-0.815, -0.879),
+	vec2(-0.383,  0.277),
+	vec2( 0.975,  0.756),
+	vec2( 0.443, -0.975)
+);
+
 float getBrightnessFromShadowMap() {
 	#if SHADOWQUALITY > 0
+	// Far cascade: larger radius (covers ~2.5 texels), softens silhouettes most.
 	float totalFar = 9.0;
 	if (shadowCoordsFar.w > 0) {
-		for (int x = -1; x <= 1; x++) {
-			for (int y = -1; y <= 1; y++) {
-				totalFar -= texture (shadowMapFar, vec3(shadowCoordsFar.xy + vec2(x * shadowMapWidthInv, y * shadowMapHeightInv), shadowCoordsFar.z - 0.0009));
-			}
+		for (int i = 0; i < 9; i++) {
+			vec2 off = vspPoissonDisk9[i] * vec2(shadowMapWidthInv, shadowMapHeightInv) * 2.5;
+			totalFar -= texture(shadowMapFar, vec3(shadowCoordsFar.xy + off, shadowCoordsFar.z - 0.0009));
 		}
 	}
 	totalFar /= 9.0;
 
-	
 	float b = 1.0 - shadowIntensity * totalFar * shadowCoordsFar.w * 0.5;
 	#endif
-	
-	
+
 	#if SHADOWQUALITY > 1
+	// Near cascade: tighter radius for crisper detail in foreground shadows.
 	float totalNear = 9.0;
 	if (shadowCoordsNear.w > 0) {
-		for (int x = -1; x <= 1; x++) {
-			for (int y = -1; y <= 1; y++) {
-				totalNear -= texture (shadowMapNear, vec3(shadowCoordsNear.xy + vec2(x * shadowMapWidthInv, y * shadowMapHeightInv), shadowCoordsNear.z - 0.0005));
-			}
+		for (int i = 0; i < 9; i++) {
+			vec2 off = vspPoissonDisk9[i] * vec2(shadowMapWidthInv, shadowMapHeightInv) * 1.6;
+			totalNear -= texture(shadowMapNear, vec3(shadowCoordsNear.xy + off, shadowCoordsNear.z - 0.0005));
 		}
 	}
-	
 	totalNear /= 9.0;
-	
-	
 
-	
-	b -=  shadowIntensity * totalNear * shadowCoordsNear.w * 0.5;
+	b -= shadowIntensity * totalNear * shadowCoordsNear.w * 0.5;
 	#endif
 	
 	#if SHADOWQUALITY > 0

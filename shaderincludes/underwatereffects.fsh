@@ -48,19 +48,20 @@ float causticFilament(vec2 p, float t) {
 	float n2 = gnoise(vec3(p * 1.74 + vec2(-t * 0.47, t * 0.84), t * 0.21));
 	float ridges = 1.0 - abs(n1 - n2);
 	ridges *= 0.82 + 0.18 * n1;
-	return smoothstep(0.52, 0.90, pow(clamp(ridges, 0.0, 1.0), 11.0));
+	return smoothstep(0.40, 0.90, pow(clamp(ridges, 0.0, 1.0), 7.0));
 }
 
 float getCausticLight(vec3 worldPos, float murkiness) {
 	if (murkiness <= 0.001) return 0.0;
-	
+
 	vec2 p = worldPos.xz * 0.58;
 	float t = windWaveCounter * 0.115;
-	float depthFade = smoothstep(0.035, 0.22, murkiness) * (1.0 - smoothstep(0.78, 1.0, murkiness));
+	// Ramp up only; getUnderwaterMurkiness already saturates fast so any high-end fade kills caustics in real ponds.
+	float depthFade = smoothstep(0.005, 0.10, murkiness);
 	float broad = causticFilament(p, t);
 	float fine = causticFilament(p * 2.15 + vec2(11.7, -4.3), t * 1.18);
-	float sparkle = pow(max(0.0, broad * 0.46 + fine * 0.36), 2.25);
-	float daylightBoost = 0.10 + clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.12;
+	float sparkle = pow(max(0.0, broad * 0.55 + fine * 0.45), 1.7);
+	float daylightBoost = 0.16 + clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.45;
 	return sparkle * depthFade * daylightBoost;
 }
 
@@ -71,10 +72,11 @@ vec3 applyUnderwaterEffects(vec3 color, float murkiness) {
 
 vec3 applyUnderwaterEffectsAt(vec3 color, float murkiness, vec3 worldPos) {
 	vec3 murkColor = waterMurkColor.rgb * 0.4;
-	vec3 causticColor = mix(vec3(0.45, 0.72, 0.86), vec3(0.76, 0.86, 0.78), clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.28);
+	vec3 causticColor = mix(vec3(0.65, 0.88, 1.00), vec3(0.94, 0.98, 0.85), clamp(realCloudShadowDaylight, 0.0, 1.0) * 0.4);
 	float waterShadow = smoothstep(0.18, 0.95, murkiness) * 0.18;
 	vec3 shadedColor = mix(color.rgb, murkColor, murkiness) * (1.0 - waterShadow);
-	return shadedColor + causticColor * getCausticLight(worldPos, murkiness);
+	// Boost caustic visibility on the seabed; the surface caustic uses its own tame factor in chunkliquid.
+	return shadedColor + causticColor * getCausticLight(worldPos, murkiness) * 1.6;
 }
 
 vec3 applyMoonDirectLight(vec3 color, vec3 normal, float fogAmount) {

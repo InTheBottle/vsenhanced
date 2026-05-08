@@ -154,9 +154,32 @@ vec2 droplethash3( vec2 p )
     return fract(sin(q)*43758.5453);
 }
 
+// Per-cell expanding-ring rain ripples driven by precIntensity (mod-plumbed) or engine dropletIntensity.
 float dropletnoise(in vec2 x)
 {
-    return 0.0;
+    float gate = max(precIntensity, dropletIntensity);
+    if (gate < 0.01) return 0.0;
+
+    float t = waterWaveCounter * 1.4;
+    vec2 ix = floor(x);
+    vec2 fx = fract(x);
+
+    float result = 0.0;
+    for (int j = -1; j <= 1; j++) {
+        for (int i = -1; i <= 1; i++) {
+            vec2 cell = ix + vec2(float(i), float(j));
+            vec2 hash = droplethash3(cell);
+            vec2 dropPos = vec2(float(i), float(j)) + hash;
+            float phase = fract(t * 0.55 + hash.x * 7.13 + hash.y * 3.71);
+            float r = phase * 0.5;
+            float d = distance(fx, dropPos);
+            // Wider ring (smaller pow factor) so the effect reads well at typical viewing distance.
+            float ring = exp(-pow((d - r) * 7.0, 2.0));
+            ring *= (1.0 - phase) * smoothstep(0.0, 0.08, phase);
+            result += ring;
+        }
+    }
+    return clamp(result, 0.0, 1.5) * clamp(gate, 0.0, 1.0) * 2.2;
 }
 
 vec2 vspWaterRefractWave(vec3 worldPos, float upness) {
@@ -446,11 +469,15 @@ void main()
 		float bottomShadow = waterDepth * (1.0 - cloudShadow * 0.45) * exposure;
 		float caustic = vspSurfaceCaustic(fragWorldPos.xyz, waterDepth, cloudShadow, shadowBright, upness) * exposure * (1.0 - fogAmount);
 		vec3 causticColor = mix(vec3(0.38, 0.64, 0.82), sunColor, 0.10);
-		float surfaceBlend = waterDepth * upness * 0.26;
+		// Baseline surface blend so even zero-depth water has visible water-tint, plus depth-driven mix.
+		float surfaceBlend = (0.18 + waterDepth * 0.26) * upness;
 		texColor.rgb = mix(texColor.rgb, depthColor * (0.44 + 0.28 * shadowBright * cloudShadow), surfaceBlend);
-		texColor.rgb += causticColor * caustic * 0.12;
+		// Surface caustic gets its own tame multiplier; the underwater seabed caustic in chunkopaque is already brighter.
+		texColor.rgb += causticColor * caustic * 0.05;
 		texColor.rgb *= 1.0 - bottomShadow * 0.12;
-		texColor.a += waterDepth * upness * (0.055 + length(refractWave) * 0.045) * (1 - texColor.a);
+		// Baseline alpha boost so shallow water is always somewhat opaque.
+		texColor.a += (0.10 + waterDepth * 0.35) * upness * (1 - texColor.a);
+		texColor.a += length(refractWave) * 0.045 * upness * (1 - texColor.a);
 	}
 	
 	texColor.rgb = applyMoonDirectLight(texColor.rgb, fragNormal, fogAmount);
