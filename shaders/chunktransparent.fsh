@@ -12,7 +12,6 @@ in vec4 worldPos;
 in vec3 vspWorldPos;
 in vec3 blockLight;
 in vec3 vertexPos;
-in float vspFogWarmKBase;
 
 in float normalShadeIntensity;
 flat in int renderFlags;
@@ -154,11 +153,11 @@ void main()
 
 	float murkiness=getUnderwaterMurkiness();
 	if (murkiness > 0) {
-		texColor = applyFogAndShadowWithNormalK(texColor, 0, normal, normalShadeIntensity, 0.45, worldPos.xyz, vspFogWarmKBase);
-		texColor.rgb = vspApplyUnderwaterEffectsAt(texColor.rgb, murkiness, vspWorldPos);
-	} else {
-		texColor = applyFogAndShadowWithNormalK(texColor, fogAmount, normal, normalShadeIntensity, 0.45, worldPos.xyz, vspFogWarmKBase);
-	}
+		texColor = applyFogAndShadowWithNormal(texColor, 0, normal, normalShadeIntensity, 0.45, worldPos.xyz);
+		texColor.rgb = vspApplyUnderwaterEffectsAt(texColor.rgb, murkiness, vspWorldPos);	
+	} else {	
+		texColor = applyFogAndShadowWithNormal(texColor, fogAmount, normal, normalShadeIntensity, 0.45, worldPos.xyz);
+	}	
 	
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));

@@ -38,7 +38,6 @@ out vec3 vspWorldPos;
 out vec4 camPos;
 out float lod0Fade;
 out float nb;
-out float vspFogWarmKBase;
 
  #if SSAOLEVEL > 0
 out vec4 gnormal;
@@ -143,12 +142,4 @@ void main(void)
 	float intensity = 0.45;
 #endif
 	nb = max(max(intensity, 0.5 + 0.5 * dot(normal, lightPosition)), normal.y * 0.95);
-
-	// Per-vertex sun forward-scatter base (matches fogandlight.fsh::vspFogTint math).
-	// Lerps across the triangle; per-fragment cost is just one multiply by shadowBright.
-	vec3 vspViewDir = normalize(worldPos.xyz);
-	float vspSunDot = max(0.0, dot(vspViewDir, lightPosition));
-	float vspS2 = vspSunDot * vspSunDot;
-	float vspSunUp = clamp(lightPosition.y * 2.0, 0.0, 1.0);
-	vspFogWarmKBase = vspS2 * vspS2 * vspS2 * vspSunUp * 0.55;
 }

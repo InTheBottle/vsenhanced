@@ -19,7 +19,6 @@ in vec4 gnormal;
 in vec4 camPos;
 in float lod0Fade;
 in float nb;
-in float vspFogWarmKBase;
 
 uniform float alphaTest;
 uniform float fogDensityIn;
@@ -169,7 +168,7 @@ void main()
 	float b = getBrightnessFromShadowMap();
 	
 	float murkiness=getUnderwaterMurkiness();
-	outColor = applyFogAndShadowFromBrightnessK(texColor, clamp(fogAmount - 50*murkiness, 0, 1), min(b, nb), worldPos.xyz, vspFogWarmKBase);
+	outColor = applyFogAndShadowFromBrightness(texColor, clamp(fogAmount - 50*murkiness, 0, 1), min(b, nb), worldPos.xyz); 
 	
 	float glow = 0;
 	float godrayLevel = 0;

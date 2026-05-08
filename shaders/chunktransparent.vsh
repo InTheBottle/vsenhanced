@@ -34,7 +34,6 @@ out vec2 uv;
 out vec4 worldPos;
 out vec3 vspWorldPos;
 out vec3 vertexPos;
-out float vspFogWarmKBase;
 
 flat out int renderFlags;
 flat out vec3 normal;
@@ -104,10 +103,4 @@ void main(void)
 	
 	normal = unpackNormal(renderFlags);
 	normalShadeIntensity = min(1, rgbaLightIn.a * 1.5);
-
-	vec3 vspViewDir = normalize(worldPos.xyz);
-	float vspSunDot = max(0.0, dot(vspViewDir, lightPosition));
-	float vspS2 = vspSunDot * vspSunDot;
-	float vspSunUp = clamp(lightPosition.y * 2.0, 0.0, 1.0);
-	vspFogWarmKBase = vspS2 * vspS2 * vspS2 * vspSunUp * 0.55;
 }

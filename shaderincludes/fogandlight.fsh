@@ -240,55 +240,6 @@ vec4 applyFog(vec4 rgbaPixel, float fogWeight) {
 	return vec4(mix(rgbaPixel.rgb, rgbaFog.rgb, mix(fogWeight, softFogWeight, 0.18)), rgbaPixel.a);
 }
 
-// Aerial perspective: warm forward-scatter when looking toward the sun in lit
-// fog, slight cool desaturation in shadowed fog. Sun-height gate fades the
-// warm tint at night without needing a dayLight uniform here.
-vec3 vspFogTint(vec3 worldPos, float shadowBright) {
-	vec3 viewDir = normalize(worldPos);
-	float sunDot = max(0.0, dot(viewDir, lightPosition));
-	float sunUp = clamp(lightPosition.y * 2.0, 0.0, 1.0);
-	float forwardScatter = pow(sunDot, 6.0) * shadowBright * sunUp;
-
-	vec3 sunWarm = vec3(1.18, 1.06, 0.86);
-	vec3 tinted = rgbaFog.rgb * mix(vec3(1.0), sunWarm, forwardScatter * 0.55);
-
-	float shadowCool = (1.0 - shadowBright) * 0.10;
-	tinted = mix(tinted, tinted * vec3(0.94, 0.97, 1.04), shadowCool);
-
-	return tinted;
-}
-
-// Reuses the shading brightness already in hand: lit fog reads a touch thinner,
-// shadowed fog a touch denser. No extra texture samples.
-float vspFogDensity(float fogWeight, float shadowBright) {
-	return clamp(fogWeight * mix(1.06, 0.96, shadowBright), 0.0, 1.0);
-}
-
-vec4 applyFogTinted(vec4 rgbaPixel, float fogWeight, vec3 worldPos, float shadowBright) {
-	fogWeight = vspFogDensity(fogWeight, shadowBright);
-	float softFogWeight = fogWeight * fogWeight * (3.0 - 2.0 * fogWeight);
-	vec3 tint = vspFogTint(worldPos, shadowBright);
-	return vec4(mix(rgbaPixel.rgb, tint, mix(fogWeight, softFogWeight, 0.18)), rgbaPixel.a);
-}
-
-// Fast variant for shaders that precompute the sun-direction term per-vertex.
-// vspFogWarmKBase = pow(max(0, dot(normalize(worldPos), lightPosition)), 6) * sunUp * 0.55
-// Identical visual to applyFogTinted but skips per-fragment normalize/dot/pow.
-vec3 vspFogTintFromBase(float warmKBase, float shadowBright) {
-	float warmK = warmKBase * shadowBright;
-	vec3 tinted = rgbaFog.rgb * mix(vec3(1.0), vec3(1.18, 1.06, 0.86), warmK);
-	float shadowCool = (1.0 - shadowBright) * 0.10;
-	tinted = mix(tinted, tinted * vec3(0.94, 0.97, 1.04), shadowCool);
-	return tinted;
-}
-
-vec4 applyFogTintedK(vec4 rgbaPixel, float fogWeight, float warmKBase, float shadowBright) {
-	fogWeight = vspFogDensity(fogWeight, shadowBright);
-	float softFogWeight = fogWeight * fogWeight * (3.0 - 2.0 * fogWeight);
-	vec3 tint = vspFogTintFromBase(warmKBase, shadowBright);
-	return vec4(mix(rgbaPixel.rgb, tint, mix(fogWeight, softFogWeight, 0.18)), rgbaPixel.a);
-}
-
 
 // 9-tap Poisson disk for PCF. Pre-distributed unit-disk samples produce softer
 // shadow edges than a 3x3 grid at the same tap count without grid banding.
@@ -365,46 +316,25 @@ vec4 applyFogAndShadow(vec4 rgbaPixel, float fogWeight) {
 vec4 applyFogAndShadowWithNormal(vec4 rgbaPixel, float fogAmount, vec3 normal, float normalShadeIntensity, float minNormalShade, vec3 worldPos) {
 	float b = getBrightnessFromShadowMap();
 	float nb = getBrightnessFromNormal(normal, normalShadeIntensity, minNormalShade);
+		
 	b = min(b, nb);
-	float fogBright = clamp(b, 0.0, 1.0);
 	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
+	
 	rgbaPixel *= vec4(b, b, b, 1);
 
-	vec4 outcolor = applyFogTinted(rgbaPixel, fogAmount, worldPos, fogBright);
+	vec4 outcolor = applyFog(rgbaPixel, fogAmount);
 	outcolor = applySpheresFog(outcolor, fogAmount, worldPos);
 	return outcolor;
 }
 
 vec4 applyFogAndShadowFromBrightness(vec4 rgbaPixel, float fogAmount, float b, vec3 worldPos) {
-	float fogBright = clamp(b, 0.0, 1.0);
 	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
+	
 	rgbaPixel *= vec4(b, b, b, 1);
-	vec4 outcolor = applyFogTinted(rgbaPixel, fogAmount, worldPos, fogBright);
+	
+	vec4 outcolor = applyFog(rgbaPixel, fogAmount);
 	outcolor = applySpheresFog(outcolor, fogAmount, worldPos);
-	return outcolor;
-}
-
-// K-variants: take a precomputed warmKBase from the vertex shader.
-// Identical output to the non-K versions; cheaper per-fragment.
-vec4 applyFogAndShadowWithNormalK(vec4 rgbaPixel, float fogAmount, vec3 normal, float normalShadeIntensity, float minNormalShade, vec3 worldPos, float warmKBase) {
-	float b = getBrightnessFromShadowMap();
-	float nb = getBrightnessFromNormal(normal, normalShadeIntensity, minNormalShade);
-	b = min(b, nb);
-	float fogBright = clamp(b, 0.0, 1.0);
-	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
-	rgbaPixel *= vec4(b, b, b, 1);
-
-	vec4 outcolor = applyFogTintedK(rgbaPixel, fogAmount, warmKBase, fogBright);
-	outcolor = applySpheresFog(outcolor, fogAmount, worldPos);
-	return outcolor;
-}
-
-vec4 applyFogAndShadowFromBrightnessK(vec4 rgbaPixel, float fogAmount, float b, vec3 worldPos, float warmKBase) {
-	float fogBright = clamp(b, 0.0, 1.0);
-	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
-	rgbaPixel *= vec4(b, b, b, 1);
-	vec4 outcolor = applyFogTintedK(rgbaPixel, fogAmount, warmKBase, fogBright);
-	outcolor = applySpheresFog(outcolor, fogAmount, worldPos);
+	
 	return outcolor;
 }
 
