@@ -154,11 +154,11 @@ vec2 droplethash3( vec2 p )
     return fract(sin(q)*43758.5453);
 }
 
-// Per-cell expanding-ring rain ripples driven by precIntensity (mod-plumbed) or engine dropletIntensity.
+// Per-cell expanding-ring rain ripples linearly tied to precIntensity so density tracks the rain particle density 1:1.
 float dropletnoise(in vec2 x)
 {
     float gate = max(precIntensity, dropletIntensity);
-    if (gate < 0.01) return 0.0;
+    if (gate < 0.001) return 0.0;
 
     float t = waterWaveCounter * 1.4;
     vec2 ix = floor(x);
@@ -169,17 +169,18 @@ float dropletnoise(in vec2 x)
         for (int i = -1; i <= 1; i++) {
             vec2 cell = ix + vec2(float(i), float(j));
             vec2 hash = droplethash3(cell);
-            vec2 dropPos = vec2(float(i), float(j)) + hash;
+            // Drop only fires this cell if its random hash falls below the rain intensity -- light rain = few cells active, heavy rain = most cells active.
+            if (hash.x > gate) continue;
+            vec2 dropPos = vec2(float(i), float(j)) + vec2(hash.x / max(0.001, gate), hash.y);
             float phase = fract(t * 0.55 + hash.x * 7.13 + hash.y * 3.71);
             float r = phase * 0.5;
             float d = distance(fx, dropPos);
-            // Wider ring (smaller pow factor) so the effect reads well at typical viewing distance.
             float ring = exp(-pow((d - r) * 7.0, 2.0));
             ring *= (1.0 - phase) * smoothstep(0.0, 0.08, phase);
             result += ring;
         }
     }
-    return clamp(result, 0.0, 1.5) * clamp(gate, 0.0, 1.0) * 2.2;
+    return clamp(result, 0.0, 0.7) * 1.6;
 }
 
 vec2 vspWaterRefractWave(vec3 worldPos, float upness) {
@@ -297,14 +298,7 @@ void main()
 	} else {
 		texColor *= vec4(rgbaFinal.rgb * shadowBright * cloudShadow, rgbaFinal.a);
 		
-		float upness = clamp(dot(fragNormal, vec3(0, 1, 0)), 0, 1);
-		float exposure = mix(0.38, 1.0, float(skyExposed));
-		float openSky = exposure * upness * (1 - fogAmount);
-		float rim = clamp((fresnel - 0.35) * 0.35, 0, 0.25);
-		vec3 skyTint = mix(reflectColor, sunColor, 0.12);
-		float shimmer = max(0.0, gnoise(vec3(fragWorldPos.x * 1.7, fragWorldPos.z * 1.7, waterWaveCounter * 0.35))) * 0.06 * sunSpecularIntensity;
-		float surfaceFocus = shimmer * 0.22;
-		texColor.rgb += skyTint * openSky * cloudShadow * (0.05 + rim + shimmer + surfaceFocus);
+		// Sky-tint addition removed -- bright additive contribution at glancing angles produced visible white bands.
 	}
 	
 	if (flowSpeed > 0) {
@@ -371,12 +365,7 @@ void main()
 			float diff = intensity * clamp(1 - diffTotal*1500 - noise1/2 + noise2/2, 0, 1);
 			float noise = intensity * (gnoise(vec3(a * 0.4, b * 0.4, wfc))/2 + gnoise(vec3(a, b, wfc))/2 + 0.5) / 2;
 			
-			float rgbAdd = max(0, bright*(diff * 0.3 + noise/10));
-			if (doLightFoam) {
-				rgbAdd *= 0.5;
-			}
-			
-			texColor.rgb += vec3(rgbAdd, rgbAdd, rgbAdd);
+			// Wave-foam RGB highlight removed -- world-anchored gnoise(*15, -abs(*15)) produces bands that slide as camera rotates. Alpha contribution kept so water still has surface texture/foam.
 			texColor.a += (max(0, diff/16 + noise/(12 - 8*min(1,windSpeed))) + vn / 4) / clamp(fresnel, 0.5, 1);
 
 	
@@ -407,22 +396,6 @@ void main()
 				vec3 eye = normalize(vec3(fWorldPos.x, fWorldPos.y - 2, fWorldPos.z));
 				vec3 reflectionVec = reflect(sunPosRel, normal);
 				float p = dot(reflectionVec, eye);
-
-				// Procedural sky tint along reflected view ray, fresnel-mixed below.
-				vec3 reflView = reflect(-eye, normal);
-				float reflUp = clamp(reflView.y, 0.0, 1.0);
-				float reflSunDot = max(0.0, dot(reflView, sunPosRel));
-				vec3 zenithBlue = vec3(0.32, 0.48, 0.78);
-				vec3 horizonHaze = mix(reflectColor, vec3(0.78, 0.74, 0.66), 0.30);
-				vec3 skyRefl = mix(horizonHaze, zenithBlue, pow(reflUp, 0.7));
-				skyRefl = mix(skyRefl, sunColor, pow(reflSunDot, 8.0) * 0.45);
-				skyRefl = applyFog(vec4(skyRefl, 1.0), fogAmount).rgb;
-
-				float fresnelMix = clamp(fresnel * 0.85 + 0.10, 0.0, 1.0) * upness;
-				#if SHADOWQUALITY > 0
-				fresnelMix *= mix(0.55, 1.0, clamp(pow(shadowBright, 2.0), 0.0, 1.0));
-				#endif
-				texColor.rgb = mix(texColor.rgb, skyRefl, fresnelMix * 0.55);
 
 				if (p > 0) {
 					float sunb = clamp(sunPosRel.y * 10, 0, 1) * clamp(1.5 - sunPosRel.y, 0, 1) * sunSpecularIntensity;
@@ -467,13 +440,10 @@ void main()
 		vec3 depthColor = mix(reflectColor, waterMurkColor.rgb, 0.65);
 		depthColor += vec3(refractWave.x * 0.055, refractWave.y * 0.040, (refractWave.x - refractWave.y) * 0.024) * waterDepth * (0.34 + realCloudShadowDaylight * 0.28);
 		float bottomShadow = waterDepth * (1.0 - cloudShadow * 0.45) * exposure;
-		float caustic = vspSurfaceCaustic(fragWorldPos.xyz, waterDepth, cloudShadow, shadowBright, upness) * exposure * (1.0 - fogAmount);
-		vec3 causticColor = mix(vec3(0.38, 0.64, 0.82), sunColor, 0.10);
 		// Baseline surface blend so even zero-depth water has visible water-tint, plus depth-driven mix.
 		float surfaceBlend = (0.18 + waterDepth * 0.26) * upness;
 		texColor.rgb = mix(texColor.rgb, depthColor * (0.44 + 0.28 * shadowBright * cloudShadow), surfaceBlend);
-		// Surface caustic gets its own tame multiplier; the underwater seabed caustic in chunkopaque is already brighter.
-		texColor.rgb += causticColor * caustic * 0.05;
+		// Surface caustic disabled -- world-space ridge noise creates visible streaks that "slide" across the surface as the camera rotates. Real caustics live on the seabed via chunkopaque/underwatereffects.
 		texColor.rgb *= 1.0 - bottomShadow * 0.12;
 		// Baseline alpha boost so shallow water is always somewhat opaque.
 		texColor.a += (0.10 + waterDepth * 0.35) * upness * (1 - texColor.a);
