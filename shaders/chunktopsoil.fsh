@@ -16,6 +16,7 @@ in vec3 blockLight;
 in vec4 worldPos;
 in vec3 vspWorldPos;
 in vec3 vertexPosition;
+in float vspFogWarmKBase;
 
 flat in int renderFlags;
 in vec3 normal;
@@ -179,7 +180,7 @@ void main()
 	
 	
 	float murkiness=getUnderwaterMurkiness();
-	outColor = applyFogAndShadowWithNormal(outColor, clamp(fogAmount - 50*murkiness, 0, 1), normal, 1, intensity, worldPos.xyz);
+	outColor = applyFogAndShadowWithNormalK(outColor, clamp(fogAmount - 50*murkiness, 0, 1), normal, 1, intensity, worldPos.xyz, vspFogWarmKBase);
 	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
 	outColor.rgb = applyMoonDirectLight(outColor.rgb, normal, fogAmount);
 	outColor.rgb = applyHemisphericalAmbient(outColor.rgb, normal, dayLightStrength, 0.18);

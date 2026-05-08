@@ -43,6 +43,7 @@ out vec4 gnormal;
 out vec3 vertexPosition;
 out vec4 worldPos;
 out vec3 vspWorldPos;
+out float vspFogWarmKBase;
 
 flat out int renderFlags;
 
@@ -109,4 +110,10 @@ void main(void)
 	gnormal = modelViewMatrix * vec4(normal, 0);
 	gnormal.w=0;
 #endif
+
+	vec3 vspViewDir = normalize(worldPos.xyz);
+	float vspSunDot = max(0.0, dot(vspViewDir, lightPosition));
+	float vspS2 = vspSunDot * vspSunDot;
+	float vspSunUp = clamp(lightPosition.y * 2.0, 0.0, 1.0);
+	vspFogWarmKBase = vspS2 * vspS2 * vspS2 * vspSunUp * 0.55;
 }
