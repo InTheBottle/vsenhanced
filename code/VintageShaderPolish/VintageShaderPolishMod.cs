@@ -22,6 +22,8 @@ public sealed class VintageShaderPolishMod : ModSystem
     {
         RealCloudShadowState.Reset();
         RealCloudShadowState.SetApi(api);
+        TerrainHeightMapState.Reset();
+        TerrainHeightMapState.SetApi(api);
         harmony = new Harmony(HarmonyId);
         harmony.PatchAll(typeof(VintageShaderPolishMod).Assembly);
         RealCloudShadowState.TryPatchCloudRendererMap(harmony);
@@ -31,8 +33,122 @@ public sealed class VintageShaderPolishMod : ModSystem
 
     public override void Dispose()
     {
+        TerrainHeightMapState.Dispose();
         harmony?.UnpatchAll(HarmonyId);
         harmony = null;
+    }
+}
+
+// Low-resolution terrain heightmap centered on the player. Used by godrays.fsh
+// as a shadow occluder source for samples that fall outside the engine's shadow
+// cascade -- without this, distant tall geometry (mountains) registers as fully
+// lit at low sun angles because the cascade is shallow and elongated.
+internal static class TerrainHeightMapState
+{
+    private const int Resolution = 256;
+    private const float MetersPerTexel = 2.0f;
+    private const float WorldSize = Resolution * MetersPerTexel;
+    private const int RecenterStep = 16;
+
+    private static int textureId;
+    private static int originX;
+    private static int originZ;
+    private static int lastSnappedX = int.MinValue;
+    private static int lastSnappedZ = int.MinValue;
+    private static bool initialized;
+    private static readonly float[] heightData = new float[Resolution * Resolution];
+    private static bool loggedFirstUpload;
+    private static ICoreClientAPI? api;
+
+    internal static int TextureId => textureId;
+    internal static float OriginX => originX;
+    internal static float OriginZ => originZ;
+    internal static float WorldSizeMeters => WorldSize;
+
+    internal static void SetApi(ICoreClientAPI clientApi) => api = clientApi;
+
+    internal static void Reset()
+    {
+        Dispose();
+        lastSnappedX = int.MinValue;
+        lastSnappedZ = int.MinValue;
+        initialized = false;
+        loggedFirstUpload = false;
+    }
+
+    internal static void Dispose()
+    {
+        if (textureId != 0)
+        {
+            try { GL.DeleteTexture(textureId); } catch { }
+            textureId = 0;
+        }
+    }
+
+    internal static bool TryUpdate()
+    {
+        if (api == null || api.World?.BlockAccessor == null) return initialized;
+        var camPos = api.World.Player?.Entity?.CameraPos;
+        if (camPos == null) return initialized;
+
+        int camX = (int)Math.Floor(camPos.X);
+        int camZ = (int)Math.Floor(camPos.Z);
+        int snapX = (camX / RecenterStep) * RecenterStep;
+        int snapZ = (camZ / RecenterStep) * RecenterStep;
+        if (initialized && snapX == lastSnappedX && snapZ == lastSnappedZ) return true;
+
+        int radius = (int)(WorldSize * 0.5f);
+        originX = snapX - radius;
+        originZ = snapZ - radius;
+        lastSnappedX = snapX;
+        lastSnappedZ = snapZ;
+
+        var ba = api.World.BlockAccessor;
+        for (int j = 0; j < Resolution; j++)
+        {
+            int worldZ = originZ + (int)(j * MetersPerTexel);
+            int row = j * Resolution;
+            for (int i = 0; i < Resolution; i++)
+            {
+                int worldX = originX + (int)(i * MetersPerTexel);
+                int h = ba.GetRainMapHeightAt(worldX, worldZ);
+                heightData[row + i] = h > 0 ? h + 0.5f : -1.0f;
+            }
+        }
+
+        int prevActive = GL.GetInteger(GetPName.ActiveTexture);
+        int prevBound = GL.GetInteger(GetPName.TextureBinding2D);
+        try
+        {
+            if (textureId == 0)
+            {
+                textureId = GL.GenTexture();
+                GL.BindTexture(TextureTarget.Texture2D, textureId);
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32f, Resolution, Resolution, 0, PixelFormat.Red, PixelType.Float, heightData);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+            }
+            else
+            {
+                GL.BindTexture(TextureTarget.Texture2D, textureId);
+                GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, Resolution, Resolution, PixelFormat.Red, PixelType.Float, heightData);
+            }
+        }
+        finally
+        {
+            GL.BindTexture(TextureTarget.Texture2D, prevBound);
+            GL.ActiveTexture((TextureUnit)prevActive);
+        }
+
+        initialized = true;
+        if (!loggedFirstUpload)
+        {
+            loggedFirstUpload = true;
+            api.Logger.Notification("Vintage Shader Polish: terrain heightmap uploaded. tex={0}, origin={1}/{2}, size={3}m.", textureId, originX, originZ, WorldSize);
+        }
+        return true;
     }
 }
 
@@ -42,6 +158,7 @@ internal static class RealCloudShadowState
     private const int SceneDepthTextureUnit = 11;
     private const int ShadowMapFarTextureUnit = 12;
     private const int ShadowMapNearTextureUnit = 13;
+    private const int TerrainHeightMapTextureUnit = 14;
     private const int ConsecutiveErrorThreshold = 8;
     private static bool disabledAfterError;
     private static int consecutiveErrors;
@@ -522,6 +639,31 @@ internal static class RealCloudShadowState
         if (shader.HasUniform("shadowMapHeightInv") && shadowFar != null && shadowFar.Height > 0)
         {
             shader.Uniform("shadowMapHeightInv", 1f / shadowFar.Height);
+        }
+
+        if (shader.HasUniform("terrainHeightMap"))
+        {
+            TerrainHeightMapState.TryUpdate();
+            if (TerrainHeightMapState.TextureId > 0 && api.World.Player?.Entity?.CameraPos is { } camPos)
+            {
+                int prevActive = GL.GetInteger(GetPName.ActiveTexture);
+                shader.BindTexture2D("terrainHeightMap", TerrainHeightMapState.TextureId, TerrainHeightMapTextureUnit);
+                GL.ActiveTexture((TextureUnit)prevActive);
+                float relX = TerrainHeightMapState.OriginX - (float)camPos.X;
+                float relZ = TerrainHeightMapState.OriginZ - (float)camPos.Z;
+                if (shader.HasUniform("heightMapOriginRel"))
+                {
+                    shader.Uniform("heightMapOriginRel", relX, relZ);
+                }
+                if (shader.HasUniform("heightMapWorldSize"))
+                {
+                    shader.Uniform("heightMapWorldSize", TerrainHeightMapState.WorldSizeMeters);
+                }
+                if (shader.HasUniform("heightMapCameraY"))
+                {
+                    shader.Uniform("heightMapCameraY", (float)camPos.Y);
+                }
+            }
         }
 
         if (!loggedFirstGodraySamplers)

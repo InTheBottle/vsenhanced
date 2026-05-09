@@ -26,6 +26,12 @@ uniform float dayLightStrength;
 // trueSunPos.y < 0 means sun below horizon (real night).
 uniform vec3 trueSunPos;
 
+// Heightmap-based shadow occluder source for samples outside the engine's shadow cascade.
+uniform sampler2D terrainHeightMap;
+uniform vec2 heightMapOriginRel;
+uniform float heightMapWorldSize;
+uniform float heightMapCameraY;
+
 uniform vec2 invFrameSizeIn;
 uniform float iGlobalTimeIn;
 
@@ -52,21 +58,46 @@ vec3 reconstructWorldPoint(vec2 uv, float depth) {
     return (invModelViewMatrix * vec4(viewPos.xyz, 1.0)).xyz;
 }
 
-// Engine matrices already produce [0,1] UV+depth, no *0.5+0.5 needed.
-float sampleSunVisibility(vec3 worldPos) {
-#if SHADOWQUALITY > 1
-    vec4 cn = toShadowMapSpaceMatrixNear * vec4(worldPos, 1.0);
-    if (cn.x > 0.04 && cn.x < 0.96 && cn.y > 0.04 && cn.y < 0.96 && cn.z < 0.999) {
-        return texture(shadowMapNear, vec3(cn.xy, cn.z - 0.0005));
+float sampleHeightMapVisibility(vec3 worldPos, vec3 sunDir) {
+    if (heightMapWorldSize <= 1.0) return 1.0;
+    const int STEPS = 12;
+    const float STEP_LEN = 22.0;
+    for (int i = 0; i < STEPS; i++) {
+        float t = (float(i) + 0.5) * STEP_LEN;
+        vec3 p = worldPos + sunDir * t;
+        vec2 uv = (p.xz - heightMapOriginRel) / heightMapWorldSize;
+        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) continue;
+        float h = texture(terrainHeightMap, uv).r;
+        if (h < 0.0) continue;
+        float rayWorldY = p.y + heightMapCameraY;
+        if (rayWorldY < h - 0.5) return 0.0;
     }
-#endif
-#if SHADOWQUALITY > 0
-    vec4 cf = toShadowMapSpaceMatrixFar * vec4(worldPos, 1.0);
-    if (cf.x > 0.04 && cf.x < 0.96 && cf.y > 0.04 && cf.y < 0.96 && cf.z < 0.999) {
-        return texture(shadowMapFar, vec3(cf.xy, cf.z - 0.0009));
-    }
-#endif
     return 1.0;
+}
+
+// Engine matrices already produce [0,1] UV+depth, no *0.5+0.5 needed.
+// useCascade=false for view-aligned-with-sun (sky) pixels where the cascade
+// test produces bogus self-occlusion; in that case heightmap is the only
+// source of shadow info.
+float sampleSunVisibility(vec3 worldPos, vec3 sunDir, bool useCascade) {
+    float cascade = 1.0;
+    if (useCascade) {
+#if SHADOWQUALITY > 1
+        vec4 cn = toShadowMapSpaceMatrixNear * vec4(worldPos, 1.0);
+        if (cn.x > 0.04 && cn.x < 0.96 && cn.y > 0.04 && cn.y < 0.96 && cn.z < 0.999) {
+            cascade = texture(shadowMapNear, vec3(cn.xy, cn.z - 0.0005));
+        } else
+#endif
+        {
+#if SHADOWQUALITY > 0
+            vec4 cf = toShadowMapSpaceMatrixFar * vec4(worldPos, 1.0);
+            if (cf.x > 0.04 && cf.x < 0.96 && cf.y > 0.04 && cf.y < 0.96 && cf.z < 0.999) {
+                cascade = texture(shadowMapFar, vec3(cf.xy, cf.z - 0.0009));
+            }
+#endif
+        }
+    }
+    return min(cascade, sampleHeightMapVisibility(worldPos, sunDir));
 }
 
 // Interleaved gradient noise (Jimenez 2014) -- blue-noise-like, not grainy.
@@ -130,7 +161,7 @@ void main(void) {
         if (t >= maxDist) break;
 
         vec3 sp = viewDir * t;
-        float vis = isSky ? 1.0 : sampleSunVisibility(sp);
+        float vis = sampleSunVisibility(sp, sunDir, !isSky);
 
         inscatter += sunCol * phase * vis * ATM_SIGMA * stepLen * transmittance;
         transmittance *= exp(-ATM_SIGMA * stepLen);
