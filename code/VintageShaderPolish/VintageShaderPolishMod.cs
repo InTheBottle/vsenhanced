@@ -39,10 +39,8 @@ public sealed class VintageShaderPolishMod : ModSystem
     }
 }
 
-// Low-resolution terrain heightmap centered on the player. Used by godrays.fsh
+// Low-res terrain heightmap centered on the player. Used by godrays.fsh
 // as a shadow occluder source for samples that fall outside the engine's shadow
-// cascade -- without this, distant tall geometry (mountains) registers as fully
-// lit at low sun angles because the cascade is shallow and elongated.
 internal static class TerrainHeightMapState
 {
     private const int Resolution = 256;
