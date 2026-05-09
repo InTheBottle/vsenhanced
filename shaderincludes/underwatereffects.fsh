@@ -227,7 +227,7 @@ float getProceduralCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	return 1.0 - strength * 0.32;
 }
 
-// Underwater/caustic cloud shadow; always procedural — engine cloud map drifted with the player.
+// Underwater/caustic cloud shadow; always procedural - engine cloud map drifted with the player.
 float getCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
 	return getProceduralCloudShadow(worldPos, normal, fogAmount);
 }
