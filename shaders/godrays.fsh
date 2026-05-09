@@ -1,6 +1,6 @@
 #version 330 core
 
-// Engine-bound; kept and referenced so the linker doesn't prune them.
+// Referenced below so the linker doesn't prune the engine-bound uniforms.
 uniform sampler2D inputTexture;
 uniform sampler2D glowParts;
 
@@ -26,7 +26,7 @@ uniform float dayLightStrength;
 // trueSunPos.y < 0 means sun below horizon (real night).
 uniform vec3 trueSunPos;
 
-// Heightmap-based shadow occluder source for samples outside the engine's shadow cascade.
+// Heightmap fallback for shadow samples outside the cascade.
 uniform sampler2D terrainHeightMap;
 uniform vec2 heightMapOriginRel;
 uniform float heightMapWorldSize;
@@ -75,10 +75,7 @@ float sampleHeightMapVisibility(vec3 worldPos, vec3 sunDir) {
     return 1.0;
 }
 
-// Engine matrices already produce [0,1] UV+depth, no *0.5+0.5 needed.
-// useCascade=false for view-aligned-with-sun (sky) pixels where the cascade
-// test produces bogus self-occlusion; in that case heightmap is the only
-// source of shadow info.
+// useCascade=false for sky pixels: cascade self-occludes on view-aligned rays.
 float sampleSunVisibility(vec3 worldPos, vec3 sunDir, bool useCascade) {
     float cascade = 1.0;
     if (useCascade) {
@@ -100,7 +97,6 @@ float sampleSunVisibility(vec3 worldPos, vec3 sunDir, bool useCascade) {
     return min(cascade, sampleHeightMapVisibility(worldPos, sunDir));
 }
 
-// Interleaved gradient noise (Jimenez 2014) -- blue-noise-like, not grainy.
 float ign(vec2 frag) {
     return fract(52.9829189 * fract(0.06711056 * frag.x + 0.00583715 * frag.y));
 }
@@ -116,7 +112,6 @@ void main(void) {
     vec3 viewDir = reconstructWorldRay(texCoord);
 
     float depth = texture(sceneDepthTex, texCoord).r;
-    // Skip shadow sampling for sky pixels: view-aligned-with-sun rays produce bogus self-shadow tests.
     bool isSky = depth >= 0.9999;
 #if SHADOWQUALITY > 0
     float marchRange = shadowRangeFar;
@@ -170,7 +165,6 @@ void main(void) {
 
     inscatter *= strength * dayGate;
 
-    // Keep samplers referenced.
     vec3 keep = texture(inputTexture, texCoord).rgb * texture(glowParts, texCoord).rgb;
     inscatter += keep * 1e-8;
 

@@ -39,8 +39,7 @@ public sealed class VintageShaderPolishMod : ModSystem
     }
 }
 
-// Low-res terrain heightmap centered on the player. Used by godrays.fsh
-// as a shadow occluder source for samples that fall outside the engine's shadow
+// Player-centered terrain heightmap; godrays.fsh uses it as a shadow occluder source for samples outside the engine cascade.
 internal static class TerrainHeightMapState
 {
     private const int Resolution = 256;
