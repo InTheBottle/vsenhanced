@@ -239,13 +239,21 @@ internal static class EyeAdaptationState
                 (float)camPos.Z + view.Z * 4f);
 
             // Sun-stare squint, narrow band so it only triggers when
-            // looking nearly directly at the sun. Modulated by sun height
-            // so dawn/dusk doesn't squint as hard as midday.
-            var sun = RealCloudShadowState.GetUpwardSunDirection();
-            float sunDot = view.X * sun.X + view.Y * sun.Y + view.Z * sun.Z;
-            float sunStare = Math.Clamp((sunDot - 0.80f) / 0.18f, 0f, 1f);
-            float sunHeight = Math.Clamp(sun.Y * 1.5f, 0.25f, 1.0f);
-            float sunBoost = sunStare * sunHeight * 0.65f;
+            // looking nearly directly at the sun. CRITICAL: gate by the
+            // RAW sun direction, not the upward-flipped one. Otherwise
+            // at night the math triggers when staring at the moon, which
+            // is hundreds of times dimmer than the sun and shouldn't
+            // cause a squint.
+            var rawSun = api.World.Calendar.SunPositionNormalized;
+            bool sunActuallyAbove = rawSun.Y > 0.05f;
+            float sunBoost = 0f;
+            if (sunActuallyAbove)
+            {
+                float sunDot = view.X * rawSun.X + view.Y * rawSun.Y + view.Z * rawSun.Z;
+                float sunStare = Math.Clamp((sunDot - 0.80f) / 0.18f, 0f, 1f);
+                float sunHeight = Math.Clamp(rawSun.Y * 1.5f, 0.25f, 1.0f);
+                sunBoost = sunStare * sunHeight * 0.65f;
+            }
 
             float perceived = Math.Max(lightAtCam, lightForward) + sunBoost;
             return Math.Clamp(perceived, 0.04f, 1.5f);
@@ -283,6 +291,7 @@ internal static class RealCloudShadowState
     private static bool loggedFirstOffset;
     private static bool loggedFirstBind;
     private static bool loggedFinalProbe;
+    private static bool loggedFinalDayLight;
     private static bool loggedFirstRendererCapture;
     private static bool loggedFirstGodrayRaymarch;
     private static bool loggedFirstGodraySamplers;
@@ -466,6 +475,7 @@ internal static class RealCloudShadowState
         bool wantsPrecIntensity = shader.HasUniform("precIntensity");
         bool wantsTrueSunPos = shader.HasUniform("trueSunPos");
         bool wantsExposure = shader.HasUniform("vspExposure");
+        bool wantsRawDayLight = shader.HasUniform("dayLight");
         if (shader.PassName == "final" && !loggedFinalProbe)
         {
             loggedFinalProbe = true;
@@ -480,7 +490,7 @@ internal static class RealCloudShadowState
         }
         bool wantsRayState = wantsInvProjection || wantsInvModelView || wantsCameraWorldPos;
         bool wantsVolumetricState = wantsCameraWorldPosition || wantsSunLight || wantsDayLight || wantsShadowIntensity || wantsFlatFog || wantsPlayerWaterDepth || wantsFogColor;
-        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos || wantsExposure;
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos || wantsExposure || wantsRawDayLight;
         if (!wantsCloudState)
         {
             return;
@@ -498,6 +508,27 @@ internal static class RealCloudShadowState
             if (wantsExposure)
             {
                 shader.Uniform("vspExposure", EyeAdaptationState.GetExposure());
+            }
+            // ShaderProgramFinal has no dayLight property setter. Push
+            // SunLightStrength NOT DayLightStrength: the latter is
+            // Math.Max(SunLightStrength, MoonLightStrength) per
+            // ClientGameCalendar.Update, so at night with moon up it's
+            // ~0.4 (moon contribution) and `night` calc never triggers.
+            // SunLightStrength is the actual sun-above-horizon signal.
+            if (shader.PassName == "final")
+            {
+                float sunStrength = api.World.Calendar.SunLightStrength;
+                shader.Uniform("dayLight", sunStrength);
+                if (!loggedFinalDayLight)
+                {
+                    loggedFinalDayLight = true;
+                    api.Logger.Notification("VSP-DBG: pushed dayLight=SunLightStrength={0:F3} to final shader (DayLightStrength was {1:F3})",
+                        sunStrength, api.World.Calendar.DayLightStrength);
+                }
+            }
+            else if (wantsRawDayLight)
+            {
+                shader.Uniform("dayLight", api.World.Calendar.SunLightStrength);
             }
 
             if (wantsLightDirection)
@@ -1038,3 +1069,4 @@ internal static class SceneProbeState
             maxR, maxG, maxB);
     }
 }
+

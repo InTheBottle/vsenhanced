@@ -21,9 +21,8 @@ uniform mat4 invModelViewMatrix;
 
 uniform vec3 realCloudShadowLightDir;
 uniform float realCloudShadowDaylight;
-uniform float realMoonLightStrength;
 uniform float dayLightStrength;
-// trueSunPos.y < 0 means sun below horizon (real night).
+// trueSunPos.y < 0 means sun below horizon (real night) — godrays skipped, vanilla engine path takes over.
 uniform vec3 trueSunPos;
 
 // Heightmap fallback for shadow samples outside the cascade.
@@ -31,9 +30,6 @@ uniform sampler2D terrainHeightMap;
 uniform vec2 heightMapOriginRel;
 uniform float heightMapWorldSize;
 uniform float heightMapCameraY;
-
-uniform vec2 invFrameSizeIn;
-uniform float iGlobalTimeIn;
 
 in vec2 texCoord;
 out vec4 outColor;
@@ -102,7 +98,12 @@ float ign(vec2 frag) {
 }
 
 void main(void) {
-    if (trueSunPos.y < 0.02) {
+    bool isNight = trueSunPos.y < 0.0;
+    vec3 lightDir = normalize(realCloudShadowLightDir);
+    float lightStrength = dayLightStrength;
+
+    // Night: skip moon godrays entirely, fall through to the engine's vanilla behavior.
+    if (isNight || lightDir.y < 0.04 || lightStrength < 0.04) {
         vec3 a = texture(inputTexture, texCoord).rgb;
         vec3 b = texture(glowParts, texCoord).rgb;
         outColor = vec4(a * b * 1e-9, 1.0);
@@ -127,9 +128,9 @@ void main(void) {
     }
     maxDist = min(maxDist, marchRange * 1.40);
 
-    float horizonRamp = smoothstep(0.02, 0.15, trueSunPos.y);
-    float lightRamp = smoothstep(0.10, 0.45, dayLightStrength);
-    float dayGate = horizonRamp * lightRamp;
+    float horizonRamp = smoothstep(0.02, 0.15, lightDir.y);
+    float lightRamp = smoothstep(0.05, 0.40, lightStrength);
+    float gate = horizonRamp * lightRamp;
 
     if (maxDist < 0.5) {
         vec3 keep = texture(inputTexture, texCoord).rgb * texture(glowParts, texCoord).rgb;
@@ -140,14 +141,15 @@ void main(void) {
     float stepLen = maxDist / float(NUM_STEPS);
     float jitter = ign(gl_FragCoord.xy);
 
-    vec3 sunDir = normalize(realCloudShadowLightDir);
-    float cosTheta = dot(viewDir, sunDir);
-
+    float cosTheta = dot(viewDir, lightDir);
     float phase = mix(phaseHG(cosTheta, 0.78), phaseHG(cosTheta, 0.30), 0.15);
 
-    float sunElev = smoothstep(-0.04, 0.20, sunDir.y);
-    vec3 sunCol = mix(vec3(1.20, 0.85, 0.55), vec3(1.05, 1.00, 0.95), sunElev);
-    float strength = clamp(realCloudShadowDaylight + realMoonLightStrength * 0.18, 0.0, 1.4);
+    float sunElev = smoothstep(-0.04, 0.20, lightDir.y);
+    vec3 lightCol = mix(vec3(1.20, 0.85, 0.55), vec3(1.05, 1.00, 0.95), sunElev);
+
+    float strength = clamp(realCloudShadowDaylight, 0.0, 1.4);
+
+    bool useCascade = !isSky;
 
     vec3 inscatter = vec3(0.0);
     float transmittance = 1.0;
@@ -156,14 +158,14 @@ void main(void) {
         if (t >= maxDist) break;
 
         vec3 sp = viewDir * t;
-        float vis = sampleSunVisibility(sp, sunDir, !isSky);
+        float vis = sampleSunVisibility(sp, lightDir, useCascade);
 
-        inscatter += sunCol * phase * vis * ATM_SIGMA * stepLen * transmittance;
+        inscatter += lightCol * phase * vis * ATM_SIGMA * stepLen * transmittance;
         transmittance *= exp(-ATM_SIGMA * stepLen);
         if (transmittance < 0.05) break;
     }
 
-    inscatter *= strength * dayGate;
+    inscatter *= strength * gate;
 
     vec3 keep = texture(inputTexture, texCoord).rgb * texture(glowParts, texCoord).rgb;
     inscatter += keep * 1e-8;

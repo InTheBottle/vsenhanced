@@ -20,10 +20,10 @@ uniform float glitchEffectStrength;
 uniform float dayLight = 1.0;
 uniform vec4 rgbaFog = vec4(0.55, 0.62, 0.72, 1.0);
 
-// Smoothed exposure modulator from CPU-side eye adaptation. ~0.7 squints
-// in bright outdoors, ~1.3 dilates in dark caves; default of 1.0 means
-// "no modulation" if the uniform isn't bound.
+// CPU-side smoothed eye-adaptation; defaults to 1.0 if unbound.
 uniform float vspExposure = 1.0;
+// From Calendar.MoonLightStrength; scales night terrain lift.
+uniform float realMoonLightStrength = 0.0;
 
 uniform float minlight = 0.0;
 uniform float maxlight = 1;
@@ -104,17 +104,15 @@ vec3 SampleBloom(float strength) {
 
 	vec3 bloom = b0 * 0.45 + (b1 + b2 + b3 + b4) * 0.1375;
 
-	// Gate by bloom luma: dark bloom pixels (atlas leakage, dim sources)
-	// are zeroed so the scene's blacks aren't lifted.
+	// Gate by bloom luma so atlas-leakage darks don't lift scene blacks.
 	float bloomLuma = dot(bloom, vec3(0.2126, 0.7152, 0.0722));
 	float gate = smoothstep(0.04, 0.28, bloomLuma);
-
-	// Soft gamma on bloom emphasises hot sources over weak ones.
 	bloom = pow(bloom, vec3(0.85));
 	return bloom * gate * strength;
 }
 
 vec3 ApplyDirectionalGrade(vec3 color) {
+	// dayLight is SunLightStrength here; engine's DayLightStrength is max(sun, moon) which never reaches 0.
 	float night = 1.0 - smoothstep(0.08, 0.35, dayLight);
 	float dusk = (1.0 - smoothstep(0.42, 0.85, dayLight)) * smoothstep(0.08, 0.38, dayLight);
 	float shadowMask = 1.0 - smoothstep(0.18, 0.58, Luma(color));
@@ -123,9 +121,7 @@ vec3 ApplyDirectionalGrade(vec3 color) {
 	color = mix(color, color * vec3(1.08, 0.96, 0.86), dusk * 0.18);
 	color = mix(color, color * vec3(0.98, 1.02, 1.10) + vec3(0.010, 0.014, 0.026), shadowMask * night * 0.28);
 
-	float nightGain = mix(1.0, 1.22, night);
-	vec3 nightFloor = vec3(0.016, 0.020, 0.034) * night;
-	color = color * nightGain + nightFloor;
+	color *= mix(1.0, 1.22, night);
 
 	return clamp(color, vec3(0.0), vec3(1.0));
 }
@@ -166,8 +162,7 @@ void main(void)
 		vec3 color = texture(primaryScene, texCoord).rgb;
 	#endif
 
-	// Bloom: gated soft-halo blend (see SampleBloom). Glow contributes to
-	// SSAO bypass so emissive surfaces don't get occluded.
+	// glowLevel feeds SSAO bypass so emissive surfaces aren't occluded.
 	float bloomSub = 0.0;
 	#if BLOOM == 1
 		vec3 bloomRaw = texture(bloomParts, texCoord).rgb;
@@ -180,7 +175,9 @@ void main(void)
 		if (bloomNight > 0.001) {
 			float bloomLuma = dot(bloomRaw, vec3(0.2126, 0.7152, 0.0722));
 			float gate = smoothstep(0.05, 0.30, bloomLuma);
-			color += bloomRaw * vec3(1.10, 0.92, 0.68) * gate * bloomNight * 0.50;
+			// Warmth gate keeps torches/fires bloomed but skips cool blue moon bloom.
+			float warmth = clamp((bloomRaw.r - bloomRaw.b) * 4.0, 0.0, 1.0);
+			color += bloomRaw * vec3(1.10, 0.92, 0.68) * gate * bloomNight * warmth * 0.55;
 		}
 	#endif
 
@@ -193,30 +190,18 @@ void main(void)
 	#endif
 
 	#if GODRAYS > 0
-		// Direct add: godrayParts holds 0-1 ray intensity; pow(1.2) here
-		// would attenuate them since pow(0.3, 1.2) < 0.3. Mild ceiling
-		// keeps the sun disc from blowing out completely.
 		vec3 godrays = min(texture(godrayParts, texCoord).rgb, vec3(0.85));
 		color += godrays * 0.65;
 	#endif
 
-	// Sky-band mask for dither weighting (computed from clamped scene).
 	vec3 sceneRef = clamp(color, vec3(0.0), vec3(1.0));
 	float skyBandMask = smoothstep(0.46, 0.82, sceneRef.b)
 		* smoothstep(sceneRef.r + 0.03, sceneRef.b + 0.20, sceneRef.b)
 		* smoothstep(sceneRef.g * 0.82, sceneRef.b + 0.18, sceneRef.b);
 
-	// Eye adaptation: small modulator around 1.0 (squint to dilate).
 	color *= autoExposure();
-
-	// Display-space grade in linear (before AgX), so user sliders behave
-	// as the engine intended.
 	color = ColorGradePreAgX(color);
-
-	// AgX tonemap, calibrated for the engine's actual range.
 	color = ApplyAgX(color);
-
-	// Optional warm/cool tint for night and dusk (display space).
 	color = ApplyDirectionalGrade(color);
 
 	outColor = vec4(color, 1.0);
@@ -229,7 +214,7 @@ void main(void)
 	float chromaStrength = clamp((frostVignetting * 0.5 + glitchEffectStrength) * edgeAmount * 0.003, 0.0, 0.003);
 	if (chromaStrength > 0.0) {
 		vec2 chromaDir = normalize(position + vec2(0.0001)) * chromaStrength;
-		// Clamp the raw HDR samples so they don't bypass the tonemap.
+		// Clamp HDR samples so they don't bypass the tonemap.
 		outColor.r = clamp(texture(primaryScene, clamp(texCoord + chromaDir, vec2(0.0), vec2(1.0))).r, 0.0, 1.0);
 		outColor.b = clamp(texture(primaryScene, clamp(texCoord - chromaDir, vec2(0.0), vec2(1.0))).b, 0.0, 1.0);
 	}
