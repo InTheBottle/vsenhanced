@@ -105,7 +105,7 @@ void main()
 		smoothstep(-0.05, 0.12, viewDir.y);
 	vec3 skyRgb = mix(engineColor.rgb, atmos, blend * 0.45);
 
-	outColor = vec4(skyRgb, 1.0);
+	outColor = vec4(skyRgb, engineColor.a);
 	outGlow = engineGlow;
 
 	if (psychedelicStrength > Epsilon) outColor = applyPsychedelicEffect(outColor, vertexPosition.xyz/2, 0);
