@@ -26,7 +26,7 @@ float vspCloudFBM(vec2 p) {
 float vspGetCloudShadow(vec3 worldPos, vec3 normal, float fogAmount) {
     float upness = clamp(normal.y * 0.5 + 0.5, 0.0, 1.0);
     float daylight = realCloudShadowDaylight * smoothstep(0.02, 0.22, realCloudShadowLightDir.y);
-    float fogFade = 1.0 - smoothstep(0.94, 0.995, fogAmount);
+    float fogFade = 1.0 - smoothstep(0.55, 0.92, fogAmount);
     if (upness <= 0.05 || daylight <= 0.01 || fogFade <= 0.01) return 1.0;
 
     vec3 sd = normalize(realCloudShadowLightDir);
