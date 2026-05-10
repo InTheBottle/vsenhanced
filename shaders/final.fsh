@@ -87,10 +87,10 @@ vec3 ApplyOutputDither(vec3 color, float skyMask) {
 	int frameWidth = int(1.0 / invFrameSize.x + 0.5);
 	vec3 noise = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 31, frameWidth).rgb;
 	float luma = Luma(color);
-	float darkBoost = 1.0 - smoothstep(0.0, 0.16, luma);
+	float darkBoost = 1.0 - smoothstep(0.0, 0.22, luma);
 	float midBand = smoothstep(0.04, 0.55, luma) * (1.0 - smoothstep(0.86, 1.0, luma));
-	float gradientMask = max(midBand, darkBoost * 1.4);
-	float strength = mix(0.55, 1.0, skyMask) * gradientMask / 255.0;
+	float gradientMask = max(midBand, darkBoost * 2.2);
+	float strength = mix(0.65, 1.0, skyMask) * gradientMask / 255.0;
 	return color + noise * strength;
 }
 
@@ -123,8 +123,8 @@ vec3 ApplyDirectionalGrade(vec3 color) {
 	color = mix(color, color * vec3(1.08, 0.96, 0.86), dusk * 0.18);
 	color = mix(color, color * vec3(0.98, 1.02, 1.10) + vec3(0.010, 0.014, 0.026), shadowMask * night * 0.28);
 
-	float nightGain = mix(1.0, 1.45, night);
-	vec3 nightFloor = vec3(0.022, 0.028, 0.045) * night;
+	float nightGain = mix(1.0, 1.22, night);
+	vec3 nightFloor = vec3(0.016, 0.020, 0.034) * night;
 	color = color * nightGain + nightFloor;
 
 	return clamp(color, vec3(0.0), vec3(1.0));

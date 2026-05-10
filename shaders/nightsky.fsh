@@ -43,7 +43,8 @@ void main () {
 	// brightened; (0.75 + twinkle*0.45) gives twinkling 75%-120% extra.
 	skyCol.rgb += skyCol.rgb * starMask * (0.75 + twinkle * 0.45) * (1.0 - horizonExtinction);
 	float nightFactor = 1.0 - smoothstep(0.06, 0.32, dayLight);
-	skyCol.rgb += vec3(0.018, 0.025, 0.052) * nightFactor * (1.0 - horizonExtinction * 0.55);
+	skyCol.rgb += vec3(0.018, 0.025, 0.052) * nightFactor * (0.40 + 0.60 * horizonExtinction);
+	skyCol.rgb += vec3(0.022, 0.018, 0.014) * nightFactor * horizonExtinction * 0.55;
 	skyCol.a = max(0.0, 1 - 2*(dayLight - 0.05));
 	
 	outColor = skyCol;
