@@ -24,6 +24,10 @@ public sealed class VintageShaderPolishMod : ModSystem
         RealCloudShadowState.SetApi(api);
         TerrainHeightMapState.Reset();
         TerrainHeightMapState.SetApi(api);
+        EyeAdaptationState.Reset();
+        EyeAdaptationState.SetApi(api);
+        SceneProbeState.Reset();
+        SceneProbeState.SetApi(api);
         harmony = new Harmony(HarmonyId);
         harmony.PatchAll(typeof(VintageShaderPolishMod).Assembly);
         RealCloudShadowState.TryPatchCloudRendererMap(harmony);
@@ -34,6 +38,8 @@ public sealed class VintageShaderPolishMod : ModSystem
     public override void Dispose()
     {
         TerrainHeightMapState.Dispose();
+        EyeAdaptationState.Reset();
+        SceneProbeState.Reset();
         harmony?.UnpatchAll(HarmonyId);
         harmony = null;
     }
@@ -149,6 +155,118 @@ internal static class TerrainHeightMapState
     }
 }
 
+// Smooth, jitter-free eye adaptation. Computes a luma proxy from the engine's
+// MaxTimeOfDayLight at the camera position - this is a deterministic per-frame
+// signal that responds to caves/indoors and time of day without any GPU readback.
+// Asymmetric temporal smoothing emulates the perceptual difference between
+// squinting (fast) and dark adaptation (slow). The result is exposed to
+// final.fsh as the vspExposure uniform.
+internal static class EyeAdaptationState
+{
+    // Modulator around 1.0. Outdoor "just standing there" should sit near
+    // 1.0 (no modulation); only direct sun-stare drops to MinExposure,
+    // and only being in a cave/shaded interior rises to MaxExposure.
+    private const float TargetLuma     = 0.55f;
+    private const float MinExposure    = 0.55f;  // sun-stare squint
+    private const float MaxExposure    = 1.55f;  // cave dilation
+    private const float AdaptSpeedDown = 4.5f;   // squint (bright -> dim) - snappy
+    private const float AdaptSpeedUp   = 1.0f;   // dark adaptation (dim -> bright) - slower
+
+    private static ICoreClientAPI? api;
+    private static float smoothedLuma = 0.6f;
+    private static double lastUpdateSec;
+    private static bool initialized;
+
+    internal static void SetApi(ICoreClientAPI clientApi) => api = clientApi;
+
+    internal static void Reset()
+    {
+        smoothedLuma = 0.6f;
+        initialized = false;
+    }
+
+    internal static float GetExposure()
+    {
+        Update();
+        float exposure = TargetLuma / Math.Max(smoothedLuma + 0.05f, 0.05f);
+        return Math.Clamp(exposure, MinExposure, MaxExposure);
+    }
+
+    private static void Update()
+    {
+        if (api?.World == null) return;
+        var calendar = api.World.Calendar;
+        if (calendar == null) return;
+
+        double nowSec = api.World.ElapsedMilliseconds / 1000.0;
+        if (!initialized)
+        {
+            lastUpdateSec = nowSec;
+            smoothedLuma = SampleTargetLuma();
+            initialized = true;
+            return;
+        }
+
+        float dt = (float)(nowSec - lastUpdateSec);
+        if (dt <= 0f) return;
+        if (dt > 0.25f) dt = 0.25f;
+        lastUpdateSec = nowSec;
+
+        float target = SampleTargetLuma();
+        float speed = target < smoothedLuma ? AdaptSpeedDown : AdaptSpeedUp;
+        float alpha = 1f - MathF.Exp(-dt * speed);
+        smoothedLuma = smoothedLuma + (target - smoothedLuma) * alpha;
+    }
+
+    private static float SampleTargetLuma()
+    {
+        if (api?.World == null) return 0.5f;
+        var entity = api.World.Player?.Entity;
+        var camPos = entity?.CameraPos;
+        if (entity == null || camPos == null) return 0.5f;
+
+        try
+        {
+            // Block-light proxy normalized so outdoor maps to ~0.5 (target
+            // luma) - that way exposure stays near 1.0 outdoor unless the
+            // player is sun-staring. Caves drop toward 0, sun-stare adds
+            // its own boost on top.
+            float lightAtCam = SampleLightAt(camPos.X, camPos.Y, camPos.Z);
+            var view = entity.Pos.GetViewVector();
+            float lightForward = SampleLightAt(
+                (float)camPos.X + view.X * 4f,
+                (float)camPos.Y + view.Y * 4f,
+                (float)camPos.Z + view.Z * 4f);
+
+            // Sun-stare squint, narrow band so it only triggers when
+            // looking nearly directly at the sun. Modulated by sun height
+            // so dawn/dusk doesn't squint as hard as midday.
+            var sun = RealCloudShadowState.GetUpwardSunDirection();
+            float sunDot = view.X * sun.X + view.Y * sun.Y + view.Z * sun.Z;
+            float sunStare = Math.Clamp((sunDot - 0.80f) / 0.18f, 0f, 1f);
+            float sunHeight = Math.Clamp(sun.Y * 1.5f, 0.25f, 1.0f);
+            float sunBoost = sunStare * sunHeight * 0.65f;
+
+            float perceived = Math.Max(lightAtCam, lightForward) + sunBoost;
+            return Math.Clamp(perceived, 0.04f, 1.5f);
+        }
+        catch
+        {
+            return 0.5f;
+        }
+    }
+
+    private static float SampleLightAt(double x, double y, double z)
+    {
+        if (api?.World == null) return 0.5f;
+        var bp = new BlockPos((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Floor(z), 0);
+        int lightLevel = api.World.BlockAccessor.GetLightLevel(bp, EnumLightLevelType.MaxTimeOfDayLight);
+        // /44 (not /22) so full outdoor sun lands at ~0.5, leaving headroom
+        // for sun-stare to push past target without immediately clamping.
+        return Math.Clamp(lightLevel / 44f, 0.04f, 1.0f);
+    }
+}
+
 internal static class RealCloudShadowState
 {
     private const int CloudMapTextureUnit = 15;
@@ -164,6 +282,7 @@ internal static class RealCloudShadowState
     private static bool loggedFirstWidth;
     private static bool loggedFirstOffset;
     private static bool loggedFirstBind;
+    private static bool loggedFinalProbe;
     private static bool loggedFirstRendererCapture;
     private static bool loggedFirstGodrayRaymarch;
     private static bool loggedFirstGodraySamplers;
@@ -346,9 +465,22 @@ internal static class RealCloudShadowState
         bool wantsFogColor = shader.HasUniform("fogColor");
         bool wantsPrecIntensity = shader.HasUniform("precIntensity");
         bool wantsTrueSunPos = shader.HasUniform("trueSunPos");
+        bool wantsExposure = shader.HasUniform("vspExposure");
+        if (shader.PassName == "final" && !loggedFinalProbe)
+        {
+            loggedFinalProbe = true;
+            api.Logger.Notification("VSP-DBG: final shader bound. wantsExposure={0}, primaryTex={1}, bloomTex={2}",
+                wantsExposure, SceneProbeState.PrimaryTextureId, SceneProbeState.BloomTextureId);
+        }
+        // Probe runs unconditionally for final shader so we can see actual
+        // pixel values regardless of whether the engine surfaced our uniform.
+        if (shader.PassName == "final")
+        {
+            SceneProbeState.TryProbe();
+        }
         bool wantsRayState = wantsInvProjection || wantsInvModelView || wantsCameraWorldPos;
         bool wantsVolumetricState = wantsCameraWorldPosition || wantsSunLight || wantsDayLight || wantsShadowIntensity || wantsFlatFog || wantsPlayerWaterDepth || wantsFogColor;
-        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos;
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos || wantsExposure;
         if (!wantsCloudState)
         {
             return;
@@ -362,6 +494,11 @@ internal static class RealCloudShadowState
             bool shouldBindCloudMap = ShouldBindCloudMap(shader, wantsCloudSampler);
             bool hasCloudState = CloudMapTextureId > 0 && CloudMapWidth > 1f && CloudOffset is { };
             ApplyVolumetricUniforms(shader, wantsCameraWorldPosition, wantsSunLight, wantsDayLight, wantsShadowIntensity, wantsFlatFog, wantsPlayerWaterDepth, wantsFogColor);
+
+            if (wantsExposure)
+            {
+                shader.Uniform("vspExposure", EyeAdaptationState.GetExposure());
+            }
 
             if (wantsLightDirection)
             {
@@ -693,7 +830,7 @@ internal static class RealCloudShadowState
         return field?.GetValue(api!.Ambient) is float value ? value : 1f;
     }
 
-    private static Vec3f GetUpwardSunDirection()
+    internal static Vec3f GetUpwardSunDirection()
     {
         Vec3f sun = api!.World.Calendar.SunPositionNormalized;
         return sun.Y < 0 ? new Vec3f(-sun.X, -sun.Y, -sun.Z) : sun;
@@ -762,4 +899,142 @@ internal static class CaptureCloudmapOffsetPatch
 internal static class BindRealCloudShadowPatch
 {
     private static void Postfix(ShaderProgramBase __instance) => RealCloudShadowState.TryApply(__instance);
+}
+
+[HarmonyPatch(typeof(ShaderProgramFinal), "set_PrimaryScene2D")]
+internal static class CapturePrimarySceneTexPatch
+{
+    private static bool logged;
+    private static void Postfix(int value)
+    {
+        if (!logged) { logged = true; SceneProbeState.LogTexCapture("primaryScene", value); }
+        SceneProbeState.SetPrimarySceneTexture(value);
+    }
+}
+
+[HarmonyPatch(typeof(ShaderProgramFinal), "set_BloomParts2D")]
+internal static class CaptureBloomPartsTexPatch
+{
+    private static bool logged;
+    private static void Postfix(int value)
+    {
+        if (!logged) { logged = true; SceneProbeState.LogTexCapture("bloomParts", value); }
+        SceneProbeState.SetBloomTexture(value);
+    }
+}
+
+// Diagnostic: reads a few pixels from primaryScene and bloomParts each
+// second so we can see actual HDR pixel values in the log instead of
+// guessing what the engine produces. Disabled after a fixed number of
+// samples to avoid spamming.
+internal static class SceneProbeState
+{
+    private const int MaxSamples = 30;
+    private const double SampleIntervalSec = 1.0;
+
+    private static ICoreClientAPI? api;
+    private static int primaryTextureId;
+    private static int bloomTextureId;
+    private static int sampleCount;
+    private static double nextSampleSec;
+    private static readonly float[] pixelBuffer = new float[4 * 9]; // 9 pixels, RGBA float
+
+    internal static void SetApi(ICoreClientAPI clientApi) => api = clientApi;
+
+    internal static void Reset()
+    {
+        primaryTextureId = 0;
+        bloomTextureId = 0;
+        sampleCount = 0;
+        nextSampleSec = 0;
+    }
+
+    internal static int PrimaryTextureId => primaryTextureId;
+    internal static int BloomTextureId => bloomTextureId;
+
+    internal static void SetPrimarySceneTexture(int textureId) => primaryTextureId = textureId;
+    internal static void SetBloomTexture(int textureId) => bloomTextureId = textureId;
+
+    internal static void LogTexCapture(string label, int textureId)
+    {
+        api?.Logger.Notification("VSP-DBG: captured {0} texture id={1}", label, textureId);
+    }
+
+    internal static void TryProbe()
+    {
+        if (api?.World == null || sampleCount >= MaxSamples) return;
+        if (primaryTextureId == 0 && bloomTextureId == 0) return;
+
+        double nowSec = api.World.ElapsedMilliseconds / 1000.0;
+        if (nowSec < nextSampleSec) return;
+        nextSampleSec = nowSec + SampleIntervalSec;
+        sampleCount++;
+
+        try
+        {
+            if (primaryTextureId != 0)
+            {
+                LogTextureSamples("primaryScene", primaryTextureId);
+            }
+            if (bloomTextureId != 0)
+            {
+                LogTextureSamples("bloomParts", bloomTextureId);
+            }
+        }
+        catch (Exception ex)
+        {
+            api?.Logger.Warning("Vintage Shader Polish: scene probe failed: {0}", ex.Message);
+        }
+    }
+
+    private static void LogTextureSamples(string label, int textureId)
+    {
+        // Query texture dimensions
+        GL.GetTextureLevelParameter(textureId, 0, GetTextureParameter.TextureWidth, out int w);
+        GL.GetTextureLevelParameter(textureId, 0, GetTextureParameter.TextureHeight, out int h);
+        GL.GetTextureLevelParameter(textureId, 0, GetTextureParameter.TextureInternalFormat, out int internalFmt);
+        if (w <= 0 || h <= 0) return;
+
+        // 3x3 grid sample positions (clamped to texture extent)
+        int[] xs = { w / 4, w / 2, 3 * w / 4 };
+        int[] ys = { h / 4, h / 2, 3 * h / 4 };
+
+        Array.Clear(pixelBuffer, 0, pixelBuffer.Length);
+        // Read a single pixel at a time (avoids stride concerns).
+        float minR = float.MaxValue, maxR = float.MinValue;
+        float minG = float.MaxValue, maxG = float.MinValue;
+        float minB = float.MaxValue, maxB = float.MinValue;
+        float sumR = 0, sumG = 0, sumB = 0;
+        int n = 0;
+        var pix = new float[4];
+        var handle = System.Runtime.InteropServices.GCHandle.Alloc(pix, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            foreach (int y in ys)
+            {
+                foreach (int x in xs)
+                {
+                    GL.GetTextureSubImage(textureId, 0, x, y, 0, 1, 1, 1,
+                        PixelFormat.Rgba, PixelType.Float,
+                        sizeof(float) * 4, handle.AddrOfPinnedObject());
+                    sumR += pix[0]; sumG += pix[1]; sumB += pix[2];
+                    minR = Math.Min(minR, pix[0]); maxR = Math.Max(maxR, pix[0]);
+                    minG = Math.Min(minG, pix[1]); maxG = Math.Max(maxG, pix[1]);
+                    minB = Math.Min(minB, pix[2]); maxB = Math.Max(maxB, pix[2]);
+                    n++;
+                }
+            }
+        }
+        finally
+        {
+            handle.Free();
+        }
+        if (n == 0) return;
+        api?.Logger.Notification(
+            "VSP-PROBE [{0}] tex={1} fmt=0x{2:X4} {3}x{4} | avg=({5:F3},{6:F3},{7:F3}) min=({8:F3},{9:F3},{10:F3}) max=({11:F3},{12:F3},{13:F3})",
+            label, textureId, internalFmt, w, h,
+            sumR / n, sumG / n, sumB / n,
+            minR, minG, minB,
+            maxR, maxG, maxB);
+    }
 }

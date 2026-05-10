@@ -20,6 +20,11 @@ uniform float glitchEffectStrength;
 uniform float dayLight = 1.0;
 uniform vec4 rgbaFog = vec4(0.55, 0.62, 0.72, 1.0);
 
+// Smoothed exposure modulator from CPU-side eye adaptation. ~0.7 squints
+// in bright outdoors, ~1.3 dilates in dark caves; default of 1.0 means
+// "no modulation" if the uniform isn't bound.
+uniform float vspExposure = 1.0;
+
 uniform float minlight = 0.0;
 uniform float maxlight = 1;
 uniform float minsat = 0;
@@ -43,173 +48,178 @@ float Luma(vec3 color) {
 	return dot(color, vec3(0.299, 0.587, 0.114));
 }
 
-float DICECurve(float x) {
-	x = max(0.0, x);
-	float shoulderStart = 0.58;
-	float shoulder = max(x - shoulderStart, 0.0);
-	float rolled = shoulderStart + shoulder / (1.0 + shoulder * 1.55);
-	return mix(x, rolled, smoothstep(shoulderStart, 1.65, x));
+const mat3 AGX_INSET = mat3(
+	0.842479, 0.042328, 0.042376,
+	0.078434, 0.878469, 0.078434,
+	0.079224, 0.079166, 0.879143
+);
+const mat3 AGX_OUTSET = mat3(
+	 1.196879, -0.052897, -0.052972,
+	-0.098021,  1.151903, -0.098043,
+	-0.099030, -0.098961,  1.151074
+);
+const float AGX_MIN_EV = -9.75;
+const float AGX_MAX_EV =  2.75;
+const float AGX_EV_INV = 0.08; // 1.0 / (max - min)
+
+vec3 ApplyAgX(vec3 color) {
+
+	color *= 1.55;
+
+	color = AGX_INSET * color;
+	color = clamp(log2(max(color, vec3(0.00005))), vec3(AGX_MIN_EV), vec3(AGX_MAX_EV));
+	color = (color - vec3(AGX_MIN_EV)) * AGX_EV_INV;
+	color = clamp(color, 0.0003, 1.0);
+	color = AGX_OUTSET * color;
+
+	color = (((((15.41 * color - 40.22) * color + 32.1) * color - 6.868) * color + 0.29) * color + 0.286) * color - 0.001;
+
+	color = pow(max(color, vec3(0.0)), vec3(2.2));
+
+	return color;
 }
 
-vec3 ApplyDICETonemap(vec3 color) {
-	color = max(color, vec3(0.0));
-	float luma = max(Luma(color), 0.0001);
-	float mappedLuma = DICECurve(luma);
-	vec3 mapped = color * (mappedLuma / luma);
-	float peak = max(max(mapped.r, mapped.g), mapped.b);
-	if (peak > 1.0) {
-		mapped /= peak;
-	}
-	return clamp(mapped, vec3(0.0), vec3(1.0));
+float autoExposure() {
+	return vspExposure;
 }
 
 vec3 ApplyOutputDither(vec3 color, float skyMask) {
 	int frameWidth = int(1.0 / invFrameSize.x + 0.5);
 	vec3 noise = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 31, frameWidth).rgb;
 	float luma = Luma(color);
-	float gradientMask = smoothstep(0.08, 0.62, luma) * (1.0 - smoothstep(0.86, 1.0, luma));
-	float strength = mix(0.45, 1.0, skyMask) * gradientMask / 255.0;
+	float darkBoost = 1.0 - smoothstep(0.0, 0.16, luma);
+	float midBand = smoothstep(0.04, 0.55, luma) * (1.0 - smoothstep(0.86, 1.0, luma));
+	float gradientMask = max(midBand, darkBoost * 1.4);
+	float strength = mix(0.55, 1.0, skyMask) * gradientMask / 255.0;
 	return color + noise * strength;
 }
 
-vec3 ApplyDetailContrast(vec3 color) {
-	vec3 center = color;
-	vec2 detailOffset = invFrameSize * vec2(1.0, 0.75);
-	vec3 blur =
-		texture(primaryScene, clamp(texCoord + detailOffset, vec2(0.0), vec2(1.0))).rgb +
-		texture(primaryScene, clamp(texCoord - detailOffset, vec2(0.0), vec2(1.0))).rgb;
-	blur *= 0.5;
-	
-	float highlightGuard = 1.0 - smoothstep(0.72, 0.95, Luma(color));
-	float darkGuard = smoothstep(0.04, 0.18, Luma(color));
-	return clamp(color + (center - blur) * 0.055 * highlightGuard * darkGuard, vec3(0.0), vec3(1.0));
+vec3 SampleBloom(float strength) {
+	vec3 b0 = texture(bloomParts, texCoord).rgb;
+	vec2 r = invFrameSize * 6.0;
+	vec3 b1 = texture(bloomParts, clamp(texCoord + vec2( r.x,  0.0), vec2(0.0), vec2(1.0))).rgb;
+	vec3 b2 = texture(bloomParts, clamp(texCoord + vec2(-r.x,  0.0), vec2(0.0), vec2(1.0))).rgb;
+	vec3 b3 = texture(bloomParts, clamp(texCoord + vec2( 0.0,  r.y), vec2(0.0), vec2(1.0))).rgb;
+	vec3 b4 = texture(bloomParts, clamp(texCoord + vec2( 0.0, -r.y), vec2(0.0), vec2(1.0))).rgb;
+
+	vec3 bloom = b0 * 0.45 + (b1 + b2 + b3 + b4) * 0.1375;
+
+	// Gate by bloom luma: dark bloom pixels (atlas leakage, dim sources)
+	// are zeroed so the scene's blacks aren't lifted.
+	float bloomLuma = dot(bloom, vec3(0.2126, 0.7152, 0.0722));
+	float gate = smoothstep(0.04, 0.28, bloomLuma);
+
+	// Soft gamma on bloom emphasises hot sources over weak ones.
+	bloom = pow(bloom, vec3(0.85));
+	return bloom * gate * strength;
 }
 
 vec3 ApplyDirectionalGrade(vec3 color) {
 	float night = 1.0 - smoothstep(0.08, 0.35, dayLight);
 	float dusk = (1.0 - smoothstep(0.42, 0.85, dayLight)) * smoothstep(0.08, 0.38, dayLight);
 	float shadowMask = 1.0 - smoothstep(0.18, 0.58, Luma(color));
-	
+
 	color = mix(color, color * vec3(0.92, 0.98, 1.09) + rgbaFog.rgb * 0.065, night * 0.42);
 	color = mix(color, color * vec3(1.08, 0.96, 0.86), dusk * 0.18);
 	color = mix(color, color * vec3(0.98, 1.02, 1.10) + vec3(0.010, 0.014, 0.026), shadowMask * night * 0.28);
-	
+
+	float nightGain = mix(1.0, 1.45, night);
+	vec3 nightFloor = vec3(0.022, 0.028, 0.045) * night;
+	color = color * nightGain + nightFloor;
+
 	return clamp(color, vec3(0.0), vec3(1.0));
 }
 
-vec4 ColorGrade(vec4 color) {
-	// I don't know why, but this seems to make the scene look a lot better
-	color.a = dot(color.rgb, vec3(0.299, 0.587, 0.114)); 
-	
-	vec3 hsl = rgb2hsl(color.rgb);
+vec3 ColorGradePreAgX(vec3 color) {
+	color = pow(color, vec3(1.0 / extraGamma));
+	color = pow(max(color, vec3(0.0)), vec3(2.4 / max(gammaLevel, 0.05)));
+	color *= brightnessLevel;
 
-	float lightRange = maxlight - minlight;
-	float satRange = maxsat - minsat;
+	vec3 sepiaScale = vec3(1.0 + sepiaLevel * 0.1, 1.0, 1.0 - sepiaLevel * 0.1);
+	color *= sepiaScale;
 
-	hsl.z = pow((clamp(hsl.z, minlight, maxlight) - minlight) / lightRange, 1/gammaLevel);
-	hsl.y = pow((clamp(hsl.y, minsat, maxsat) - minsat) / satRange, 1);
-	
-	
-	color.rgb = hsl2rgb(hsl);
-	color.rgb = pow(color.rgb, vec3(1.0 / extraGamma));
-	color.rgb *= brightnessLevel;
+	const float invGrey = 1.0 / 0.18;
+	vec3 cPow = vec3(1.25 + contrastLevel * 0.16667);
+	color = pow(max(color * invGrey, vec3(0.0001)), cPow);
+	color *= 0.18 * (0.75 + contrastLevel * 0.2);
 
-	// Sepia
-	vec3 sepia = vec3(
-		(color.r * 0.393) + (color.g * 0.769) + (color.b * 0.189),
-		(color.r * 0.349) + (color.g * 0.686) + (color.b * 0.168),
-		(color.r * 0.272) + (color.g * 0.534) + (color.b * 0.131)
-	) * 0.85;
-	
-	color.rgb = mix(color.rgb, sepia, sepiaLevel);
-	
-	color.rgb = color.rgb * (contrastLevel+1) - contrastLevel;
-	
-	if (glitchEffectStrength > 0) {
-		float g = gnoise(vec3(texCoord.x * 2000.0, texCoord.y * 2000.0, mod(windWaveCounter*30, 100)));
-		color.rgb *= mix(1, clamp(0.7 + g / 2, 0.7, 1), glitchEffectStrength);
-		
-		vec3 rust = vec3(
-			(color.r * 0.393) + (color.g * 0.769) + (color.b * 0.189),
-			(color.r * 0.349) + (color.g * 0.686) + (color.b * 0.168),
-			(color.r * 0.272) + (color.g * 0.534) + (color.b * 0.131)
+	if (glitchEffectStrength > 0.0) {
+		float g = gnoise(vec3(texCoord.xy * 2000.0, mod(windWaveCounter * 30.0, 100.0)));
+		color *= mix(1.0, clamp(0.7 + g * 0.5, 0.7, 1.0), glitchEffectStrength);
+		vec3 glitchScale = vec3(
+			1.0 + glitchEffectStrength * 0.75,
+			1.0 + glitchEffectStrength * 0.10,
+			1.0 - glitchEffectStrength * 0.20
 		);
-		
-		float gdiff = min(color.g, 0.1);
-		float bdiff = min(color.b, 0.1);
-		rust.g -= gdiff;
-		rust.b -= bdiff;
-		rust.r += gdiff + bdiff;
-		
-		color.rgb = mix(color.rgb, rust, glitchEffectStrength);
-		color.a += glitchEffectStrength/3;
+		color *= glitchScale;
 	}
-	
 
-	
-	
-	// Limit brightness
-	// This was commented out, why? Seems to only affect overly bright surfaces
-	color.rgb = ApplyDICETonemap(color.rgb);
-	
-	return color;	
+	return color;
 }
 
 
 void main(void)
 {
-	// FXAA precompiler constant is set by game engine
 	#if FXAA == 1
-		vec4 color = fxaaTexturePixel(primaryScene, texCoord, invFrameSize);
+		vec3 color = fxaaTexturePixel(primaryScene, texCoord, invFrameSize).rgb;
 	#else
-		vec4 color = texture(primaryScene, texCoord);
-	#endif	
-    
-	color.a=1;
-	float bloomSub = 0;
+		vec3 color = texture(primaryScene, texCoord).rgb;
+	#endif
+
+	// Bloom: gated soft-halo blend (see SampleBloom). Glow contributes to
+	// SSAO bypass so emissive surfaces don't get occluded.
+	float bloomSub = 0.0;
 	#if BLOOM == 1
-		vec4 bloomCol = texture(bloomParts, texCoord);
+		vec3 bloomRaw = texture(bloomParts, texCoord).rgb;
 		float glowLevel = texture(glowParts, texCoord).r;
-		
-		float ambLevel = ambientBloomLevel / 2.0;
-		
-		color.rgb = (color.rgb + bloomCol.rgb * (ambLevel * 1.5)) / (1 + ambLevel);
-		
-		bloomSub = glowLevel * (bloomCol.r + bloomCol.b + bloomCol.g);
-	#endif 
+		float bloomStrength = clamp(ambientBloomLevel * 0.45, 0.0, 0.85);
+		color += SampleBloom(bloomStrength);
+		bloomSub = glowLevel * dot(bloomRaw, vec3(0.2126, 0.7152, 0.0722));
+
+		float bloomNight = 1.0 - smoothstep(0.08, 0.35, dayLight);
+		if (bloomNight > 0.001) {
+			float bloomLuma = dot(bloomRaw, vec3(0.2126, 0.7152, 0.0722));
+			float gate = smoothstep(0.05, 0.30, bloomLuma);
+			color += bloomRaw * vec3(1.10, 0.92, 0.68) * gate * bloomNight * 0.50;
+		}
+	#endif
 
 	#if SSAOLEVEL > 0
+		float ssao = texture(ssaoScene, texCoord).r;
 		#if SSAOLEVEL > 1
-			float ssao = min(texture(ssaoScene, texCoord).r, texture(ssaoScene, texCoord - vec2(0, invFrameSize.y*1)).r);
-		#else
-			float ssao = texture(ssaoScene, texCoord).r;
-		#endif		
-		
-		color.rgb *= min(1.0, ssao + bloomSub);
-		
-		/*if (texCoord.x < 0.5) {
-		   color.rgb = mix(color.rgb, vec3(ssao), 1);
-		}*/
+			ssao = min(ssao, texture(ssaoScene, texCoord - vec2(0.0, invFrameSize.y)).r);
+		#endif
+		color *= min(1.0, ssao + bloomSub);
 	#endif
-	
-	
+
 	#if GODRAYS > 0
-		vec3 godrays = min(texture(godrayParts, texCoord).rgb, vec3(0.65));
-		float godrayLuma = Luma(godrays);
-		float rayBlend = smoothstep(0.004, 0.16, godrayLuma);
-		color.rgb += godrays * (0.62 + rayBlend * 0.30);
-		color.rgb = ApplyDICETonemap(color.rgb);
-		color.a=1;
+		// Direct add: godrayParts holds 0-1 ray intensity; pow(1.2) here
+		// would attenuate them since pow(0.3, 1.2) < 0.3. Mild ceiling
+		// keeps the sun disc from blowing out completely.
+		vec3 godrays = min(texture(godrayParts, texCoord).rgb, vec3(0.85));
+		color += godrays * 0.65;
 	#endif
-	
-	vec4 gradedColor = ColorGrade(color);
-	
-	outColor = mix(color, gradedColor, gradedColor.a);
-	outColor.rgb = ApplyDetailContrast(outColor.rgb);
-	outColor.rgb = ApplyDirectionalGrade(outColor.rgb);
-	float skyBandMask = smoothstep(0.46, 0.82, color.b) * smoothstep(color.r + 0.03, color.b + 0.20, color.b) * smoothstep(color.g * 0.82, color.b + 0.18, color.b);
-	outColor.rgb = ApplyDICETonemap(outColor.rgb);
-	
+
+	// Sky-band mask for dither weighting (computed from clamped scene).
+	vec3 sceneRef = clamp(color, vec3(0.0), vec3(1.0));
+	float skyBandMask = smoothstep(0.46, 0.82, sceneRef.b)
+		* smoothstep(sceneRef.r + 0.03, sceneRef.b + 0.20, sceneRef.b)
+		* smoothstep(sceneRef.g * 0.82, sceneRef.b + 0.18, sceneRef.b);
+
+	// Eye adaptation: small modulator around 1.0 (squint to dilate).
+	color *= autoExposure();
+
+	// Display-space grade in linear (before AgX), so user sliders behave
+	// as the engine intended.
+	color = ColorGradePreAgX(color);
+
+	// AgX tonemap, calibrated for the engine's actual range.
+	color = ApplyAgX(color);
+
+	// Optional warm/cool tint for night and dusk (display space).
+	color = ApplyDirectionalGrade(color);
+
+	outColor = vec4(color, 1.0);
 
 
 	// Vignetting
@@ -219,8 +229,9 @@ void main(void)
 	float chromaStrength = clamp((frostVignetting * 0.5 + glitchEffectStrength) * edgeAmount * 0.003, 0.0, 0.003);
 	if (chromaStrength > 0.0) {
 		vec2 chromaDir = normalize(position + vec2(0.0001)) * chromaStrength;
-		outColor.r = texture(primaryScene, clamp(texCoord + chromaDir, vec2(0.0), vec2(1.0))).r;
-		outColor.b = texture(primaryScene, clamp(texCoord - chromaDir, vec2(0.0), vec2(1.0))).b;
+		// Clamp the raw HDR samples so they don't bypass the tonemap.
+		outColor.r = clamp(texture(primaryScene, clamp(texCoord + chromaDir, vec2(0.0), vec2(1.0))).r, 0.0, 1.0);
+		outColor.b = clamp(texture(primaryScene, clamp(texCoord - chromaDir, vec2(0.0), vec2(1.0))).b, 0.0, 1.0);
 	}
 	
 	

@@ -28,16 +28,20 @@ layout(location = 3) out vec4 outGPosition;
 #include underwatereffects.fsh
 
 void main () {
-	vec4 skyCol = texture (ctex, texCoords) + NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 37, horizontalResolution) * 0.08;
+	vec4 skyCol = texture (ctex, texCoords) + NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 37, horizontalResolution) * 0.10;
 	skyCol -= 0.03f;
 	skyCol.rgb *= 2;
-	
+
 	vec3 skyDir = normalize(texCoords);
 	float horizonExtinction = 1.0 - smoothstep(-0.04, 0.32, skyDir.y + playerToSealevelOffset * 0.0004);
-	float starMask = smoothstep(0.18, 0.65, max(max(skyCol.r, skyCol.g), skyCol.b));
+	// Wider mask threshold so faint stars register; brighter starMask
+	// boost so identified star pixels pop without lifting the dark sky.
+	float starMask = smoothstep(0.14, 0.55, max(max(skyCol.r, skyCol.g), skyCol.b));
 	float twinkle = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 41, horizontalResolution).x;
 	skyCol.rgb *= 1.0 - horizonExtinction * (0.35 + 0.2 * horizonFog);
-	skyCol.rgb += skyCol.rgb * starMask * twinkle * 0.025 * (1.0 - horizonExtinction);
+	// Strong star multiplier: starMask gates this so only star pixels get
+	// brightened; (0.75 + twinkle*0.45) gives twinkling 75%-120% extra.
+	skyCol.rgb += skyCol.rgb * starMask * (0.75 + twinkle * 0.45) * (1.0 - horizonExtinction);
 	float nightFactor = 1.0 - smoothstep(0.06, 0.32, dayLight);
 	skyCol.rgb += vec3(0.018, 0.025, 0.052) * nightFactor * (1.0 - horizonExtinction * 0.55);
 	skyCol.a = max(0.0, 1 - 2*(dayLight - 0.05));

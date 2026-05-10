@@ -89,7 +89,14 @@ void main()
 	#endif
 	
 	if (psychedelicStrength > Epsilon) col = applyPsychedelicEffect(col, vertexPos.xyz, 1);
-	
+
+	// Night moonlight lift: clouds at night were almost black. sunPosition.y
+	// goes negative below horizon, so this fades to 0 at dawn and is fully
+	// active in deep night. Daytime untouched.
+	float nightFactor = clamp(-sunPosition.y * 3.0, 0.0, 1.0);
+	col.rgb += vec3(0.035, 0.045, 0.072) * nightFactor;
+	col.rgb *= mix(1.0, 1.22, nightFactor);
+
 	col.rgb = mix(col.rgb, rgbaFog.rgb, fogAmountf) + plightrgb;
 
 	col.rgb += vec3(0.1, 0.5, 0.1) * nightVisionStrengthv;
