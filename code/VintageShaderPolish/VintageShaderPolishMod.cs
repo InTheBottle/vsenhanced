@@ -227,10 +227,6 @@ internal static class EyeAdaptationState
 
         try
         {
-            // Block-light proxy normalized so outdoor maps to ~0.5 (target
-            // luma) - that way exposure stays near 1.0 outdoor unless the
-            // player is sun-staring. Caves drop toward 0, sun-stare adds
-            // its own boost on top.
             float lightAtCam = SampleLightAt(camPos.X, camPos.Y, camPos.Z);
             var view = entity.Pos.GetViewVector();
             float lightForward = SampleLightAt(
@@ -238,12 +234,6 @@ internal static class EyeAdaptationState
                 (float)camPos.Y + view.Y * 4f,
                 (float)camPos.Z + view.Z * 4f);
 
-            // Sun-stare squint, narrow band so it only triggers when
-            // looking nearly directly at the sun. CRITICAL: gate by the
-            // RAW sun direction, not the upward-flipped one. Otherwise
-            // at night the math triggers when staring at the moon, which
-            // is hundreds of times dimmer than the sun and shouldn't
-            // cause a squint.
             var rawSun = api.World.Calendar.SunPositionNormalized;
             bool sunActuallyAbove = rawSun.Y > 0.05f;
             float sunBoost = 0f;
@@ -251,8 +241,11 @@ internal static class EyeAdaptationState
             {
                 float sunDot = view.X * rawSun.X + view.Y * rawSun.Y + view.Z * rawSun.Z;
                 float sunStare = Math.Clamp((sunDot - 0.80f) / 0.18f, 0f, 1f);
-                float sunHeight = Math.Clamp(rawSun.Y * 1.5f, 0.25f, 1.0f);
-                sunBoost = sunStare * sunHeight * 0.65f;
+                if (sunStare > 0f && SunVisibleFromCamera(camPos, rawSun))
+                {
+                    float sunHeight = Math.Clamp(rawSun.Y * 1.5f, 0.25f, 1.0f);
+                    sunBoost = sunStare * sunHeight * 0.65f;
+                }
             }
 
             float perceived = Math.Max(lightAtCam, lightForward) + sunBoost;
@@ -269,9 +262,25 @@ internal static class EyeAdaptationState
         if (api?.World == null) return 0.5f;
         var bp = new BlockPos((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Floor(z), 0);
         int lightLevel = api.World.BlockAccessor.GetLightLevel(bp, EnumLightLevelType.MaxTimeOfDayLight);
-        // /44 (not /22) so full outdoor sun lands at ~0.5, leaving headroom
-        // for sun-stare to push past target without immediately clamping.
         return Math.Clamp(lightLevel / 44f, 0.04f, 1.0f);
+    }
+
+    private static bool SunVisibleFromCamera(Vec3d camPos, Vec3f sunDir)
+    {
+        if (api?.World?.BlockAccessor is not { } ba) return true;
+
+        const float stepLen = 1.5f;
+        const int maxSteps = 48; // ~72m of reach along the sun direction
+        for (int s = 1; s <= maxSteps; s++)
+        {
+            float dist = s * stepLen;
+            double px = camPos.X + sunDir.X * dist;
+            double py = camPos.Y + sunDir.Y * dist;
+            double pz = camPos.Z + sunDir.Z * dist;
+            int terrainTop = ba.GetRainMapHeightAt((int)Math.Floor(px), (int)Math.Floor(pz));
+            if (terrainTop > py) return false;
+        }
+        return true;
     }
 }
 
