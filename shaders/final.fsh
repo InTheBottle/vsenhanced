@@ -85,13 +85,17 @@ float autoExposure() {
 
 vec3 ApplyOutputDither(vec3 color, float skyMask) {
 	int frameWidth = int(1.0 / invFrameSize.x + 0.5);
-	vec3 noise = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 31, frameWidth).rgb;
+	// NoiseFromPixelPosition already returns +-1/128 (about +-2 LSB). The old
+	// code multiplied by a second /255 which made this a no-op. Use a single
+	// channel (luma-only) -- per-channel noise reads as color grain on dark
+	// night scenes -- at sub-LSB strength, just enough to break banding.
+	float noise = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 31, frameWidth).r;
 	float luma = Luma(color);
 	float darkBoost = 1.0 - smoothstep(0.0, 0.22, luma);
 	float midBand = smoothstep(0.04, 0.55, luma) * (1.0 - smoothstep(0.86, 1.0, luma));
-	float gradientMask = max(midBand, darkBoost * 2.2);
-	float strength = mix(0.65, 1.0, skyMask) * gradientMask / 255.0;
-	return color + noise * strength;
+	float gradientMask = max(midBand, darkBoost);
+	float strength = mix(0.25, 0.40, skyMask) * gradientMask;
+	return color + vec3(noise * strength);
 }
 
 vec3 SampleBloom(float strength) {
@@ -117,7 +121,11 @@ vec3 ApplyDirectionalGrade(vec3 color) {
 	float dusk = (1.0 - smoothstep(0.42, 0.85, dayLight)) * smoothstep(0.08, 0.38, dayLight);
 	float shadowMask = 1.0 - smoothstep(0.18, 0.58, Luma(color));
 
-	color = mix(color, color * vec3(0.92, 0.98, 1.09) + rgbaFog.rgb * 0.065, night * 0.42);
+	// Luma-normalized fog hue: the night lift follows the actual scene fog color
+	// (bound by the mod each frame) so foggy nights are graded toward the real
+	// fog hue, while the normalization keeps the tuned night brightness intact.
+	vec3 fogHue = rgbaFog.rgb * (0.61 / max(Luma(rgbaFog.rgb), 0.05));
+	color = mix(color, color * vec3(0.92, 0.98, 1.09) + fogHue * 0.065, night * 0.42);
 	color = mix(color, color * vec3(1.08, 0.96, 0.86), dusk * 0.18);
 	color = mix(color, color * vec3(0.98, 1.02, 1.10) + vec3(0.010, 0.014, 0.026), shadowMask * night * 0.28);
 

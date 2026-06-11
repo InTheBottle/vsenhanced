@@ -485,6 +485,9 @@ internal static class RealCloudShadowState
         bool wantsTrueSunPos = shader.HasUniform("trueSunPos");
         bool wantsExposure = shader.HasUniform("vspExposure");
         bool wantsRawDayLight = shader.HasUniform("dayLight");
+        // ShaderProgramFinal has no RgbaFog property setter, so the rgbaFog
+        // uniform in final.fsh would otherwise stay at its compile-time default.
+        bool wantsRgbaFog = shader.PassName == "final" && shader.HasUniform("rgbaFog");
         if (shader.PassName == "final" && !loggedFinalProbe)
         {
             loggedFinalProbe = true;
@@ -499,7 +502,7 @@ internal static class RealCloudShadowState
         }
         bool wantsRayState = wantsInvProjection || wantsInvModelView || wantsCameraWorldPos;
         bool wantsVolumetricState = wantsCameraWorldPosition || wantsSunLight || wantsDayLight || wantsShadowIntensity || wantsFlatFog || wantsPlayerWaterDepth || wantsFogColor;
-        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos || wantsExposure || wantsRawDayLight;
+        bool wantsCloudState = wantsCloudSampler || wantsCloudMapWidth || wantsCloudOffset || wantsCloudStrength || wantsLightDirection || wantsDaylight || wantsMoonlight || wantsRayState || wantsVolumetricState || wantsPrecIntensity || wantsTrueSunPos || wantsExposure || wantsRawDayLight || wantsRgbaFog;
         if (!wantsCloudState)
         {
             return;
@@ -517,6 +520,10 @@ internal static class RealCloudShadowState
             if (wantsExposure)
             {
                 shader.Uniform("vspExposure", EyeAdaptationState.GetExposure());
+            }
+            if (wantsRgbaFog)
+            {
+                shader.Uniform("rgbaFog", api.Ambient.BlendedFogColor);
             }
             // ShaderProgramFinal has no dayLight property setter. Push
             // SunLightStrength NOT DayLightStrength: the latter is

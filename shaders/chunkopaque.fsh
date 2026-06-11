@@ -64,10 +64,27 @@ void main()
 	texColor = vspApplyWetSurface(texColor, normal, vspWorldPos, fogAmount, glowLevel);
 	
 	float b = getBrightnessFromShadowMap();
-	
+
 	float murkiness=getUnderwaterMurkiness();
-	outColor = applyFogAndShadowFromBrightness(texColor, clamp(fogAmount - 50*murkiness, 0, 1), min(b, nb), worldPos.xyz); 
-	
+
+	// VSP surface lighting runs on the shadowed color BEFORE fog so that fully
+	// fogged terrain converges to exactly the engine fog color. That keeps the
+	// terrain/sky horizon seamless at every time of day.
+	vec4 litColor = applyShadowFromBrightness(texColor, min(b, nb));
+	litColor.rgb = applyMoonDirectLight(litColor.rgb, normal, fogAmount);
+	litColor.rgb = applyHemisphericalAmbient(litColor.rgb, normal, dayLightStrength, 0.18);
+	litColor.rgb = applyEmissiveBounce(litColor.rgb, blockLight, 0.55);
+	litColor.rgb = applyContactDarken(litColor.rgb, 0.20);
+	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
+	float vspLitGuard = smoothstep(0.015, 0.09, dot(litColor.rgb, vec3(0.299, 0.587, 0.114)));
+	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
+	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
+	litColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);
+
+	float effectiveFog = clamp(fogAmount - 50*murkiness, 0.0, 1.0);
+	outColor = applyFog(litColor, effectiveFog);
+	outColor = applySpheresFog(outColor, effectiveFog, worldPos.xyz);
+
 	float glow = 0;
 	float godrayLevel = 0;
 
@@ -84,15 +101,6 @@ void main()
 	}
 
 	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
-	outColor.rgb = applyMoonDirectLight(outColor.rgb, normal, fogAmount);
-	outColor.rgb = applyHemisphericalAmbient(outColor.rgb, normal, dayLightStrength, 0.18);
-	outColor.rgb = applyEmissiveBounce(outColor.rgb, blockLight, 0.55);
-	outColor.rgb = applyContactDarken(outColor.rgb, 0.20);
-	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
-	float vspLitGuard = smoothstep(0.015, 0.09, dot(outColor.rgb, vec3(0.299, 0.587, 0.114)));
-	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
-	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
-	outColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);
 
 
 #if NORMALVIEW == 0	

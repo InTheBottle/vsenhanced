@@ -306,21 +306,30 @@ float getBrightnessFromNormal(vec3 normal, float normalShadeIntensity, float min
 }
 
 
+// Shadow-only variants: apply the shadow/normal brightness WITHOUT fog, so
+// callers can run surface lighting effects on the shadowed color first and
+// apply fog last. Fog applied last means fully fogged pixels converge to
+// exactly rgbaFog and match the sky fog band at every time of day.
+vec4 applyShadowFromBrightness(vec4 rgbaPixel, float b) {
+	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
+	return rgbaPixel * vec4(b, b, b, 1);
+}
+
+vec4 applyShadowWithNormal(vec4 rgbaPixel, vec3 normal, float normalShadeIntensity, float minNormalShade) {
+	float b = getBrightnessFromShadowMap();
+	float nb = getBrightnessFromNormal(normal, normalShadeIntensity, minNormalShade);
+	return applyShadowFromBrightness(rgbaPixel, min(b, nb));
+}
+
 vec4 applyFogAndShadow(vec4 rgbaPixel, float fogWeight) {
 	float b = getBrightnessFromShadowMap();
 	rgbaPixel *= vec4(b, b, b, 1);
-	
+
 	return applyFog(rgbaPixel, fogWeight);
 }
 
 vec4 applyFogAndShadowWithNormal(vec4 rgbaPixel, float fogAmount, vec3 normal, float normalShadeIntensity, float minNormalShade, vec3 worldPos) {
-	float b = getBrightnessFromShadowMap();
-	float nb = getBrightnessFromNormal(normal, normalShadeIntensity, minNormalShade);
-		
-	b = min(b, nb);
-	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
-	
-	rgbaPixel *= vec4(b, b, b, 1);
+	rgbaPixel = applyShadowWithNormal(rgbaPixel, normal, normalShadeIntensity, minNormalShade);
 
 	vec4 outcolor = applyFog(rgbaPixel, fogAmount);
 	outcolor = applySpheresFog(outcolor, fogAmount, worldPos);
@@ -328,13 +337,11 @@ vec4 applyFogAndShadowWithNormal(vec4 rgbaPixel, float fogAmount, vec3 normal, f
 }
 
 vec4 applyFogAndShadowFromBrightness(vec4 rgbaPixel, float fogAmount, float b, vec3 worldPos) {
-	b *= 1+max(0.0, shadowIntensity * 2.0 - 1.66) / 1.5;
-	
-	rgbaPixel *= vec4(b, b, b, 1);
-	
+	rgbaPixel = applyShadowFromBrightness(rgbaPixel, b);
+
 	vec4 outcolor = applyFog(rgbaPixel, fogAmount);
 	outcolor = applySpheresFog(outcolor, fogAmount, worldPos);
-	
+
 	return outcolor;
 }
 

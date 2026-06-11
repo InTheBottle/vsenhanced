@@ -39,13 +39,24 @@ void main () {
 	float starMask = smoothstep(0.14, 0.55, max(max(skyCol.r, skyCol.g), skyCol.b));
 	float twinkle = NoiseFromPixelPosition(ivec2(gl_FragCoord.xy), 41, horizontalResolution).x;
 	skyCol.rgb *= 1.0 - horizonExtinction * (0.35 + 0.2 * horizonFog);
+	// Sky fog veil: the distance-fog term the engine sky uses plus a flat-fog
+	// term mirroring getFogLevel (ray altitude sampled at a 250m reference
+	// distance). Fades both the VSP additions and the dome alpha below, so the
+	// engine's fog-pulled sky shows through instead of being blended to black.
+	float fStart = flatFogDensity < 0.0 ? flatFogStart : 0.0;
+	float vspFlatFog = clamp(1.0 - 1.0 / exp((skyDir.y * 250.0 - fStart) * flatFogDensity), 0.0, 1.0);
+	float vspSkyFog = clamp(fogMinIn + max(fogDensityIn * 120.0 - 0.12, 0.0) + vspFlatFog, 0.0, 1.0);
+	float vspFogClear = 1.0 - vspSkyFog;
 	// Strong star multiplier: starMask gates this so only star pixels get
 	// brightened; (0.75 + twinkle*0.45) gives twinkling 75%-120% extra.
-	skyCol.rgb += skyCol.rgb * starMask * (0.75 + twinkle * 0.45) * (1.0 - horizonExtinction);
+	skyCol.rgb += skyCol.rgb * starMask * (0.75 + twinkle * 0.45) * (1.0 - horizonExtinction) * vspFogClear;
 	float nightFactor = 1.0 - smoothstep(0.06, 0.32, dayLight);
-	skyCol.rgb += vec3(0.018, 0.025, 0.052) * nightFactor * (0.40 + 0.60 * horizonExtinction);
-	skyCol.rgb += vec3(0.022, 0.018, 0.014) * nightFactor * horizonExtinction * 0.55;
+	skyCol.rgb += vec3(0.018, 0.025, 0.052) * nightFactor * (0.40 + 0.60 * horizonExtinction) * vspFogClear;
+	skyCol.rgb += vec3(0.022, 0.018, 0.014) * nightFactor * horizonExtinction * 0.55 * vspFogClear;
 	skyCol.a = max(0.0, 1 - 2*(dayLight - 0.05));
+	// In dense fog the star dome must not blend the (fog-colored) sky toward
+	// black: fading alpha keeps the night horizon consistent with terrain fog.
+	skyCol.a *= vspFogClear;
 	
 	outColor = skyCol;
 	outColor.rgb += vec3(0.1, 0.5, 0.1) * nightVisionStrengthv;

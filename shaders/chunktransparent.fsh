@@ -50,13 +50,12 @@ void main()
 	texColor = vspApplyWetSurface(texColor, normal, vspWorldPos, fogAmount, glowLevel);
 
 	float murkiness=getUnderwaterMurkiness();
-	if (murkiness > 0) {
-		texColor = applyFogAndShadowWithNormal(texColor, 0, normal, normalShadeIntensity, 0.45, worldPos.xyz);
-		texColor.rgb = vspApplyUnderwaterEffectsAt(texColor.rgb, murkiness, vspWorldPos);	
-	} else {	
-		texColor = applyFogAndShadowWithNormal(texColor, fogAmount, normal, normalShadeIntensity, 0.45, worldPos.xyz);
-	}	
-	
+
+	// VSP surface lighting runs on the shadowed color BEFORE fog so that fully
+	// fogged geometry converges to exactly the engine fog color. That keeps the
+	// terrain/sky horizon seamless at every time of day.
+	texColor = applyShadowWithNormal(texColor, normal, normalShadeIntensity, 0.45);
+
 	float vspCloudShadow = vspGetCloudShadow(vspWorldPos, normal, fogAmount);
 	float vspLitGuard = smoothstep(0.015, 0.09, dot(texColor.rgb, vec3(0.299, 0.587, 0.114)));
 	texColor.rgb = applyMoonDirectLight(texColor.rgb, normal, fogAmount);
@@ -74,7 +73,15 @@ void main()
 	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
 	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
 	texColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);
-	
+
+	if (murkiness > 0) {
+		texColor = applySpheresFog(texColor, 0.0, worldPos.xyz);
+		texColor.rgb = vspApplyUnderwaterEffectsAt(texColor.rgb, murkiness, vspWorldPos);
+	} else {
+		texColor = applyFog(texColor, fogAmount);
+		texColor = applySpheresFog(texColor, fogAmount, worldPos.xyz);
+	}
+
 
 #if SHINYEFFECT > 0
 	float glow=0;

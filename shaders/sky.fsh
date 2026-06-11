@@ -26,14 +26,11 @@ layout(location = 3) out vec4 outGPosition;
 
 vec3 ApplySkyGradientDither(vec3 color) {
 	vec3 p = vec3(gl_FragCoord.xy, 73.0);
-	vec3 noise = fract(sin(vec3(
-		dot(p, vec3(12.9898, 78.233, 37.719)),
-		dot(p, vec3(39.3468, 11.135, 83.155)),
-		dot(p, vec3(73.156, 52.235, 9.151))
-	)) * 43758.5453) - vec3(0.5);
+	// Luma-only dither: per-channel noise reads as color grain on dark skies.
+	float noise = fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453) - 0.5;
 	float luma = dot(color, vec3(0.299, 0.587, 0.114));
 	float gradientMask = smoothstep(0.04, 0.48, luma) * (1.0 - smoothstep(0.88, 1.0, luma));
-	return color + noise * gradientMask * (0.85 / 255.0);
+	return color + vec3(noise) * gradientMask * (0.85 / 255.0);
 }
 
 // Rayleigh + Mie analytic atmosphere. Coefficients tuned visually, not physical.
@@ -88,9 +85,15 @@ void main()
 	atmos = atmos / (atmos + vec3(1.0));
 
 	// Blend our analytic atmosphere only where it's clean; engine palette elsewhere.
+	// Gate by the same fog amount the engine sky color used so the atmosphere can
+	// never un-fog the horizon band: fogged sky stays exactly the engine fog color
+	// and matches the fogged terrain below it at every time of day.
+	vec3 skyPosNorm = normalize(vec3(vertexPosition.x, vertexPosition.y + sealevelOffsetFactor * playerToSealevelOffset, vertexPosition.z));
+	float skyFogAmount = getFogAmountForSky(vertexPosition, skyPosNorm, sealevelOffsetFactor, horizonFog);
 	float blend = smoothstep(0.20, 0.70, dayClamped) *
 		(1.0 - clamp(horizonFog, 0.0, 0.85)) *
-		smoothstep(-0.05, 0.12, viewDir.y);
+		smoothstep(-0.05, 0.12, viewDir.y) *
+		(1.0 - skyFogAmount);
 	vec3 skyRgb = mix(engineColor.rgb, atmos, blend * 0.45);
 
 	outColor = vec4(skyRgb, engineColor.a);

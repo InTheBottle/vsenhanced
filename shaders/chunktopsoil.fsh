@@ -77,8 +77,11 @@ void main()
 	
 	
 	float murkiness=getUnderwaterMurkiness();
-	outColor = applyFogAndShadowWithNormal(outColor, clamp(fogAmount - 50*murkiness, 0, 1), normal, 1, intensity, worldPos.xyz);
-	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
+
+	// VSP surface lighting runs on the shadowed color BEFORE fog so that fully
+	// fogged terrain converges to exactly the engine fog color. That keeps the
+	// terrain/sky horizon seamless at every time of day.
+	outColor = applyShadowWithNormal(outColor, normal, 1, intensity);
 	outColor.rgb = applyMoonDirectLight(outColor.rgb, normal, fogAmount);
 	outColor.rgb = applyHemisphericalAmbient(outColor.rgb, normal, dayLightStrength, 0.18);
 	outColor.rgb = applyEmissiveBounce(outColor.rgb, blockLight, 0.55);
@@ -88,6 +91,11 @@ void main()
 	float vspShadowFactor = mix(1.0, vspCloudShadow, vspLitGuard);
 	if (!(vspShadowFactor >= 0.0)) vspShadowFactor = 1.0;
 	outColor.rgb *= clamp(vspShadowFactor, 0.5, 1.0);
+
+	float effectiveFog = clamp(fogAmount - 50*murkiness, 0.0, 1.0);
+	outColor = applyFog(outColor, effectiveFog);
+	outColor = applySpheresFog(outColor, effectiveFog, worldPos.xyz);
+	outColor.rgb = vspApplyUnderwaterEffectsAt(outColor.rgb, murkiness, vspWorldPos);
 	
 	outColor.a = rgbaFog.a;
 
